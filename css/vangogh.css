@@ -1,0 +1,128 @@
+/* ===========================================
+   致敬梵高 Elimar — 粒子聚影互动页面
+   参考 elimar.lmigroupintl.com 的黑白分界粒子风格
+   =========================================== */
+
+.vangogh-page {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  min-height: 100vh;
+  overflow: hidden;
+  background: #ffffff;
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.vangogh-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1;
+  display: block;
+  cursor: crosshair;
+}
+
+/* 顶部标题区（LMI PRESENTS / Elimar by / Vincent van Gogh） */
+.vg-title {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -58%);
+  z-index: 3;
+  text-align: center;
+  pointer-events: none;
+  color: #ffffff;
+  mix-blend-mode: difference;
+  transition: opacity 1.2s ease;
+}
+
+.vg-title.is-hidden {
+  opacity: 0;
+}
+
+.vg-eyebrow {
+  display: block;
+  font-family: "Helvetica Neue", Arial, sans-serif;
+  font-size: clamp(11px, 1.1vw, 15px);
+  letter-spacing: 0.45em;
+  font-weight: 400;
+  margin-bottom: 1.2em;
+  opacity: 0.9;
+}
+
+.vg-heading {
+  margin: 0;
+  font-size: clamp(2.4rem, 7vw, 6rem);
+  font-style: italic;
+  font-weight: 400;
+  line-height: 1.05;
+  letter-spacing: 0.01em;
+}
+
+.vg-subheading {
+  margin: 0.1em 0 0 0;
+  font-size: clamp(2.2rem, 6.5vw, 5.6rem);
+  font-weight: 400;
+  line-height: 1.1;
+  letter-spacing: 0.01em;
+}
+
+/* 中部单词（regret / redemption 等）—— difference混合模式自动随背景反色 */
+.vg-word {
+  position: fixed;
+  top: 56%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 4;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 1.4s ease;
+  mix-blend-mode: difference;
+}
+
+.vg-word.is-visible {
+  opacity: 1;
+}
+
+.vg-word-text {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(2.6rem, 8vw, 7rem);
+  font-weight: 400;
+  font-style: normal;
+  letter-spacing: 0.02em;
+  color: #ffffff;
+  display: inline-block;
+}
+
+/* 底部提示 */
+.vg-hint {
+  position: fixed;
+  bottom: 26px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  margin: 0;
+  font-family: "Helvetica Neue", Arial, sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.35em;
+  color: #888;
+  pointer-events: none;
+  opacity: 0.55;
+  animation: vgHintBlink 3.2s ease-in-out infinite;
+  white-space: nowrap;
+}
+
+@keyframes vgHintBlink {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.75; }
+}
+
+/* 点击/移动后标题淡出时的过渡 */
+@media (max-width: 768px) {
+  .vg-hint {
+    font-size: 10px;
+    letter-spacing: 0.25em;
+  }
+}
