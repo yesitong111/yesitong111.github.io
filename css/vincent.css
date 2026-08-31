@@ -1,0 +1,143 @@
+/* ===========================================
+   梵高粒子肖像 - 样式
+   设计参考：B站视频 BV1q9rjB1Eje
+   =========================================== */
+
+.vincent-page {
+  position: relative;
+  width: 100%;
+  min-height: 100vh;
+  background: #000;
+  overflow: hidden;
+  font-family: "Times New Roman", Georgia, serif;
+  color: #fff;
+  cursor: none;
+}
+
+.vincent-bg,
+.vincent-particles {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: block;
+}
+
+.vincent-bg {
+  z-index: 1;
+}
+
+.vincent-particles {
+  z-index: 2;
+}
+
+/* 文字层 */
+.vincent-text {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none;
+  text-align: center;
+  padding: 0 8vw;
+}
+
+.vincent-chapter {
+  font-size: clamp(11px, 1vw, 14px);
+  letter-spacing: 0.3em;
+  font-weight: 300;
+  color: #fff;
+  opacity: 0;
+  animation: fadeIn 2s ease 0.5s forwards;
+  margin-bottom: 2vh;
+  text-transform: uppercase;
+}
+
+.vincent-title {
+  font-size: clamp(4rem, 12vw, 11rem);
+  font-weight: 400;
+  line-height: 0.95;
+  margin: 0 0 4vh 0;
+  letter-spacing: -0.02em;
+  color: #fff;
+  opacity: 0;
+  animation: fadeIn 2.5s ease 1s forwards;
+}
+
+.vincent-subtitle {
+  font-size: clamp(1.5rem, 3vw, 2.5rem);
+  font-weight: 400;
+  font-style: italic;
+  margin: 0;
+  color: #fff;
+  opacity: 0;
+  animation: fadeIn 2s ease 2.5s forwards;
+  min-height: 1.2em;
+}
+
+.vincent-scroll {
+  position: fixed;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%) rotate(-90deg);
+  transform-origin: left center;
+  font-size: 11px;
+  letter-spacing: 0.4em;
+  color: #fff;
+  opacity: 0;
+  animation: fadeIn 2s ease 3.5s forwards;
+  z-index: 3;
+}
+
+/* 自定义鼠标光标 */
+.vincent-cursor {
+  position: fixed;
+  width: 24px;
+  height: 24px;
+  border: 1px solid #fff;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 9999;
+  transform: translate(-50%, -50%);
+  transition: width 0.2s, height 0.2s, border-color 0.2s;
+  mix-blend-mode: difference;
+}
+
+.vincent-cursor::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  background: #fff;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.vincent-tip {
+  position: fixed;
+  bottom: 15px;
+  right: 20px;
+  z-index: 4;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: #fff;
+  opacity: 0.4;
+  pointer-events: none;
+  font-family: -apple-system, "Microsoft YaHei", sans-serif;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+  .vincent-text { padding: 0 6vw; }
+  .vincent-tip { font-size: 9px; right: 10px; bottom: 10px; }
+}
