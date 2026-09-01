@@ -45,39 +45,6 @@
   pointer-events: none;
 }
 
-/* 开场黑洞中央的引言（衬线白字，滚入正文后淡出） */
-.vg-intro {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 5;
-  width: min(88vw, 900px);
-  text-align: center;
-  pointer-events: none;
-  color: #f2f2f0;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(1.15rem, 3vw, 2.3rem);
-  line-height: 1.35;
-  font-weight: 400;
-  letter-spacing: 0.005em;
-  text-shadow: 0 2px 24px rgba(0,0,0,0.5);
-  transition: opacity 1.1s ease;
-}
-
-.vg-intro p {
-  margin: 0.15em 0;
-}
-
-.vg-intro em {
-  font-style: italic;
-  opacity: 0.85;
-}
-
-.vg-intro.is-hidden {
-  opacity: 0;
-}
-
 /* 顶部标题区（LMI PRESENTS / Elimar by / Vincent van Gogh） */
 .vg-title {
   position: fixed;
@@ -124,6 +91,31 @@
 }
 
 /* 中部单词（regret / redemption 等）—— difference 随背景反色 */
+/* 开场黑洞中央文案 */
+.vg-intro {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 4;
+  margin: 0;
+  max-width: 32em;
+  text-align: center;
+  pointer-events: none;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1rem, 2vw, 1.4rem);
+  line-height: 1.6;
+  letter-spacing: 0.01em;
+  color: #ffffff;
+  mix-blend-mode: difference;
+  opacity: 1;
+  transition: opacity 1.2s ease;
+}
+
+.vg-intro.is-hidden {
+  opacity: 0;
+}
+
 .vg-word {
   position: fixed;
   top: 56%;
