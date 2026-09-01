@@ -1,21 +1,14 @@
 /* ==========================================================
-   致敬梵高 Elimar — WebGL 点云粒子（原生 WebGL，零外部依赖）
-   参考 elimar.lmigroupintl.com 的三层架构：
-     渲染核心 = WebGL 点云 + 自定义 GLSL 着色器
-     动画控制 = 滚动进度(0~1) 同步粒子聚散 / 章节切换
-     质感增强 = 软粒子(羽化) + 半透明混合 + 胶片颗粒叠加
-
-   人物刻画三层细节优化（图像转点云）：
-     1) 密度分级：生成概率 ∝ 明暗强度 × 局部纹理（素描排线逻辑）
-     2) 大小分级：强明暗/强纹理处粒子大、弱处小，边缘柔化
-     3) 半透明混合：叠加处自然形成高光/重墨层次
-
-   章节 01：梵高肖像照 young-vincent —— 左白右黑分界屏：
-     人物骑分界线（中心在屏62%宽）；左半白底黑粒子(暗部)、
-     右半黑底白粒子(亮部×纹理)，面部细节清晰
-   章节 02：RDR2 版画 —— 黑/白/红 三蒙版三层彩色粒子，
-     contain 等比适配（不拉伸），纸色底
-   动态：Perlin 呼吸 + 鼠标斥力(按住爆散) + 滚动聚散
+   粒子点云（原生 WebGL，零外部依赖）— 复刻 elimar.lmigroupintl.com
+   视觉与交互（按图1~4）：
+     1) 背景 = 左白右黑的【柔和宽渐变】（无硬分界线），滚动时渐变渐强
+     2) 满屏常驻自由漂浮的"灰尘/星尘"粒子（大小不一、黑/白/灰都有），
+        始终在画面各处漂浮，像星空与浮尘
+     3) 滚动：部分粒子从漂浮状态【聚焦】成主体人像（图2→3→4），
+        其余粒子继续自由漂浮；滚到底再散开
+     4) 鼠标移动 = 摄影机视角平移（parallax），画面随鼠标轻微移动，
+        非斥力；远近层粒子位移幅度不同，有景深
+     渲染：软粒子(羽化) + 半透明混合 + 胶片颗粒叠加
    ========================================================== */
 (function () {
   'use strict';
@@ -35,86 +28,87 @@
     return;
   }
 
-  /* ---------------- 粒子着色器 ---------------- */
+  /* ---------------- 粒子着色器 ----------------
+     aPos: 人像采样粒子为 uv(0..1)；灰尘粒子为 NDC 自由坐标
+     aDrift: 漂移相位/幅度； aMix: 0=纯人像层(聚焦) 1=纯灰尘(始终漂浮) */
   var VSH = [
-    'attribute vec2 aPos;',      // uv 0..1
+    'attribute vec2 aPos;',
     'attribute float aSize;',
     'attribute float aAlpha;',
     'attribute float aSeed;',
+    'attribute vec3 aColor;',
     'uniform float uTime;',
-    'uniform float uProgress;',  // 本章聚散进度 0聚合 1散开
-    'uniform float uKX;',        // 该层等比映射系数
+    'uniform float uProgress;',   // 0=漂浮灰尘 1=聚焦成像
+    'uniform float uDisperse;',   // 1=滚到底散开
+    'uniform float uKX;',
     'uniform float uKY;',
-    'uniform vec2 uOff;',        // 该层 NDC 偏移
+    'uniform vec2 uOff;',
     'uniform float uPointSize;',
-    'uniform float uMouseRadius;',
-    'uniform float uMouseStrength;',
-    'uniform float uAlphaScale;',// 章节可见度
-    'uniform float uClipL;',     // 左右裁剪（分界屏：黑粒子只画左半/白粒子只画右半）
-    'uniform float uClipR;',
-    'uniform vec2 uMouse;',
+    'uniform float uAlphaScale;',
+    'uniform vec2 uPar;',         // 摄影机视差（鼠标）
+    'uniform int uFree;',         // 1=自由灰尘粒子
     'varying float vAlpha;',
-    'float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }',
-    'float vnoise(vec2 p){',
-    '  vec2 i = floor(p); vec2 f = fract(p);',
-    '  f = f * f * (3.0 - 2.0 * f);',
-    '  float a = hash(i);',
-    '  float b = hash(i + vec2(1.0, 0.0));',
-    '  float c = hash(i + vec2(0.0, 1.0));',
-    '  float d = hash(i + vec2(1.0, 1.0));',
-    '  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);',
-    '}',
+    'varying vec3 vColor;',
+    'float hash(float n){ return fract(sin(n) * 43758.5453123); }',
     'void main(){',
-    '  vec2 base = vec2((aPos.x - 0.5) * 2.0 * uKX + uOff.x, (0.5 - aPos.y) * 2.0 * uKY + uOff.y);',
-    // 左右裁剪：分界屏中黑粒子只画左半、白粒子只画右半
-    '  float clip = step(uClipL, base.x) * step(base.x, uClipR);',
-    // 每个粒子稳定的随机散射方向与半径（绕原位散开）
-    '  float r = hash(aPos * vec2(143.7, 211.3) + aSeed);',
-    '  float ang = r * 6.2831853;',
-    '  float rad = 0.6 + 1.8 * hash(aPos * vec2(97.3, 51.1) + aSeed);',
-    '  vec2 scattered = base + vec2(cos(ang), sin(ang)) * rad;',
-    // 聚合原图 <-> 散开 插值
-    '  vec2 target = mix(base, scattered, uProgress);',
-    // 呼吸感：Perlin 噪声微位移
-    '  vec2 np = aPos * 4.0 + vec2(uTime * 0.12, uTime * 0.16);',
-    '  vec2 breathe = vec2(vnoise(np) - 0.5, vnoise(np + vec2(11.3, 5.7)) - 0.5) * 0.035;',
-    // 鼠标斥力：小半径轻柔推开，松开弹性回归（学原网页）
-    '  vec2 delta = target - uMouse;',
-    '  float len = max(length(delta), 0.0001);',
-    '  float fo = 1.0 - clamp(len / uMouseRadius, 0.0, 1.0);',
-    '  vec2 push = (delta / len) * (fo * fo * uMouseStrength);',
-    '  vec2 finalPos = target + breathe + push;',
+    '  vec2 base;',
+    '  vec2 drift;',
+    '  float parAmt;',
+    '  if (uFree == 1) {',
+    '    base = aPos;',                                  // 灰尘：已是 NDC
+    '    drift = vec2(sin(uTime*0.13 + aSeed*40.0) + sin(uTime*0.05 + aSeed*17.0),',
+    '                  cos(uTime*0.11 + aSeed*31.0) + sin(uTime*0.07 + aSeed*23.0)) * 0.05;',
+    '    parAmt = 0.02 + hash(aSeed*7.1) * 0.05;',       // 远/近层视差不同（景深）
+    '  } else {',
+    '    vec2 img = vec2((aPos.x - 0.5) * 2.0 * uKX + uOff.x, (0.5 - aPos.y) * 2.0 * uKY + uOff.y);',
+    // 人像粒子的自由漂浮位置：稳定的大半径散布
+    '    float ang = aSeed * 6.2831853;',
+    '    float rad = 0.7 + hash(aSeed * 3.3) * 1.9;',
+    '    vec2 freePos = vec2(cos(ang), sin(ang)) * rad;',
+    '    drift = vec2(sin(uTime*0.10 + aSeed*50.0), cos(uTime*0.12 + aSeed*38.0)) * 0.03;',
+    '    parAmt = 0.015;',
+    // 聚焦进度（带粒子级相位，让聚焦更有机）；滚到底再散开
+    '    float ph = smoothstep(0.0, 0.35, uProgress * (1.0 + 0.35 * hash(aSeed * 5.7)) - 0.18 * hash(aSeed * 9.1));',
+    '    ph = ph * (1.0 - uDisperse);',
+    '    base = mix(freePos, img, ph);',
+    '  }',
+    '  vec2 finalPos = base + drift + uPar * parAmt;',
     '  gl_Position = vec4(finalPos, 0.0, 1.0);',
-    '  gl_PointSize = aSize * uPointSize * clip;',
-    '  vAlpha = aAlpha * uAlphaScale * clip;',
+    '  gl_PointSize = aSize * uPointSize;',
+    '  vAlpha = aAlpha * uAlphaScale;',
+    '  vColor = aColor;',
     '}'
   ].join('\n');
 
   var FSH = [
     'precision mediump float;',
-    'uniform vec3 uColor;',
     'varying float vAlpha;',
+    'varying vec3 vColor;',
     'void main(){',
-    // 软粒子：羽化边缘，接近炭笔素描质感
     '  vec2 c = gl_PointCoord - vec2(0.5);',
     '  float d = length(c);',
-    '  float a = smoothstep(0.5, 0.15, d) * vAlpha;',
+    '  float a = smoothstep(0.5, 0.12, d) * vAlpha;',
     '  if (a < 0.01) discard;',
-    '  gl_FragColor = vec4(uColor, a);',
+    '  gl_FragColor = vec4(vColor, a);',
     '}'
   ].join('\n');
 
-  /* ---------------- 分界背景着色器（常驻左白右黑） ---------------- */
+  /* ---------------- 背景着色器：柔和左白右黑渐变（无硬分界） ---------------- */
   var BG_VSH = 'attribute vec2 aPos; varying vec2 vUv; void main(){ vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }';
   var BG_FSH = [
     'precision mediump float;',
     'varying vec2 vUv;',
-    'uniform float uEdge;',
+    'uniform float uIntensity;',   // 滚动越深，黑白对比越强（图1→图4）
     'void main(){',
     '  float x = (vUv.x - 0.5) * 2.0;',
-    '  float sb = smoothstep(uEdge - 0.22, uEdge + 0.22, x);',
-    '  vec3 split = mix(vec3(0.96, 0.96, 0.95), vec3(0.02, 0.02, 0.02), sb);',
-    '  gl_FragColor = vec4(split, 1.0);',
+    // 很宽的柔和过渡，中心在左 1/3；对比强度随滚动 0.35→1
+    '  float b = smoothstep(-0.95, 0.95, (x + 0.15) * 1.05);',
+    '  vec3 white = vec3(0.97, 0.97, 0.96);',
+    '  vec3 black = vec3(0.02, 0.02, 0.02);',
+    '  vec3 g = mix(white, black, b);',
+    // 起始(图1)整体偏白、对比弱；滚动后黑白分明
+    '  g = mix(vec3(0.86), g, uIntensity);',
+    '  gl_FragColor = vec4(g, 1.0);',
     '}'
   ].join('\n');
 
@@ -139,16 +133,17 @@
     aPos: gl.getAttribLocation(prog, 'aPos'),
     aSize: gl.getAttribLocation(prog, 'aSize'),
     aAlpha: gl.getAttribLocation(prog, 'aAlpha'),
-    aSeed: gl.getAttribLocation(prog, 'aSeed')
+    aSeed: gl.getAttribLocation(prog, 'aSeed'),
+    aColor: gl.getAttribLocation(prog, 'aColor')
   };
   var U = {};
-  ['uTime', 'uProgress', 'uKX', 'uKY', 'uOff', 'uPointSize', 'uMouseRadius',
-   'uMouseStrength', 'uAlphaScale', 'uClipL', 'uClipR', 'uMouse', 'uColor'].forEach(function (n) {
+  ['uTime', 'uProgress', 'uDisperse', 'uKX', 'uKY', 'uOff', 'uPointSize',
+   'uAlphaScale', 'uPar', 'uFree'].forEach(function (n) {
     U[n] = gl.getUniformLocation(prog, n);
   });
   var BG = {
     aPos: gl.getAttribLocation(bgProg, 'aPos'),
-    uEdge: gl.getUniformLocation(bgProg, 'uEdge')
+    uIntensity: gl.getUniformLocation(bgProg, 'uIntensity')
   };
 
   var bgBuf = gl.createBuffer();
@@ -161,34 +156,35 @@
 
   /* ---------------- 状态 ---------------- */
   var W = 0, H = 0, DPR = 1;
-  var mouse = { x: 0, y: 0, strength: 0, target: 0 };
+  var mouse = { x: 0, y: 0, px: 0, py: 0 };
+  var par = { x: 0, y: 0 };
   var progress = 0, targetProgress = 0;
   var time = 0;
 
-  /* 页面配置：/vangogh/ 用默认（双章节），/cat/ 通过 window.VANGOGH_CONFIG 覆盖 */
+  /* 页面配置：/cat/ 单主体；/vangogh/ 双章节（梵高 + RDR2） */
   var CFG = window.VANGOGH_CONFIG || {};
-  var SINGLE = !!CFG.single;                 // 单章节页面（猫）
-  var EDGE_NDC = CFG.edge != null ? CFG.edge : 0.24; // 分界线 NDC x（人物中心）
+  var SINGLE = !!CFG.single;
 
-  /* 图层顺序即绘制顺序。fit: contain 等比完整。
-     分界屏常驻左白右黑（分界线 NDC 0.24），人物骑分界线：
-     章节01：肖像 黑粒子层(左半,暗部) + 白粒子层(右半,亮部×纹理)
-     章节02：RDR2 黑粒子层(左半) + 白粒子层(右半) + 红粒子层(骑全线)
-     透明底PNG：alpha<128 的像素不生成粒子（抠图干净） */
+  /* 人像图层：mode=dark 黑粒子(暗部) / light 白粒子(亮部×纹理) /
+     lightCat 白粒子(深色主体靠毛发纹理) / flat 蒙版整块 */
   var layers = CFG.layers || [
-    { url: '/img/vangogh/young-vincent.png', mode: 'dark',  fit: 'contain', ox: 0.24, oy: -0.08, clipL: -2, clipR: 0.24, color: [0.08, 0.08, 0.08], chapter: 1 },
-    { url: '/img/vangogh/young-vincent.png', mode: 'light', fit: 'contain', ox: 0.24, oy: -0.08, clipL: 0.24, clipR: 2, color: [0.93, 0.93, 0.92], chapter: 1 },
-    { url: '/img/rdr2/mask_black.png', mode: 'lightFlat', fit: 'contain', ox: 0.24, oy: 0, clipL: -2, clipR: 0.24, color: [0.07, 0.06, 0.05], chapter: 2 },
-    { url: '/img/rdr2/mask_white.png', mode: 'lightFlat', fit: 'contain', ox: 0.24, oy: 0, clipL: 0.24, clipR: 2, color: [0.97, 0.95, 0.90], chapter: 2 },
-    { url: '/img/rdr2/mask_red.png',   mode: 'white',     fit: 'contain', ox: 0.24, oy: 0, clipL: -2, clipR: 2, color: [0.78, 0.10, 0.10], chapter: 2 }
+    { url: '/img/vangogh/young-vincent.png', mode: 'dark',  fit: 'contain', ox: -0.05, oy: -0.05, color: [0.07, 0.07, 0.07], chapter: 1 },
+    { url: '/img/vangogh/young-vincent.png', mode: 'light', fit: 'contain', ox: -0.05, oy: -0.05, color: [0.95, 0.95, 0.94], chapter: 1 },
+    { url: '/img/rdr2/mask_black.png', mode: 'darkflat', fit: 'contain', ox: 0.10, oy: 0, color: [0.06, 0.05, 0.05], chapter: 2 },
+    { url: '/img/rdr2/mask_white.png', mode: 'lightflat', fit: 'contain', ox: 0.10, oy: 0, color: [0.96, 0.94, 0.89], chapter: 2 },
+    { url: '/img/rdr2/mask_red.png',   mode: 'redflat',   fit: 'contain', ox: 0.10, oy: 0, color: [0.78, 0.10, 0.10], chapter: 2 }
   ];
 
-  /* ---------------- 等比映射系数（不拉伸） ---------------- */
+  /* ---------------- 等比映射（正确的 contain/cover） ----------------
+     uv 居中矩形半宽=kx、半高=ky（NDC）。图片高宽比 ia，视口 va。
+     contain：整张图完整落在视口内；cover：铺满视口。 */
   function fitK(ia, va, fit) {
     if (fit === 'cover') {
-      return ia <= va ? { kx: 1, ky: 1 / ia } : { kx: ia, ky: 1 };
+      // 铺满：让较短方向填满
+      return ia >= va ? { kx: 1, ky: va / ia } : { kx: ia / va, ky: 1 };
     }
-    return ia <= va ? { kx: ia, ky: 1 } : { kx: 1, ky: 1 / ia };
+    // contain：整张完整，留边
+    return ia >= va ? { kx: 1, ky: va / ia } : { kx: ia / va, ky: 1 };
   }
 
   function applyFits() {
@@ -199,8 +195,6 @@
       var k = fitK(L.aspect, va, L.fit);
       L.kx = k.kx; L.ky = k.ky;
     }
-    gl.useProgram(bgProg);
-    gl.uniform1f(BG.uEdge, EDGE_NDC);
   }
 
   /* ---------------- 盒式模糊（局部纹理基线） ---------------- */
@@ -230,9 +224,9 @@
     return out;
   }
 
-  /* ---------------- 采样：图像 -> 点云（三层细节优化） ---------------- */
+  /* ---------------- 采样：图像 -> 点云（密度/大小/透明度分级） ---------------- */
   function sampleLayer(layer, img) {
-    var sw = Math.min(img.width, 720);
+    var sw = Math.min(img.width, layer.sampleW || 620);
     var sh = Math.round(sw * img.height / img.width);
     var sc = document.createElement('canvas');
     sc.width = sw; sc.height = sh;
@@ -245,52 +239,48 @@
     for (i = 0, p = 0; i < data.length; i += 4, p++) {
       luma[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
     }
-    // 局部纹理 = 与模糊基线的差（五官/胡须/衣纹/版画笔触）
     var base = boxBlur(luma, sw, sh, 3);
 
-    var arr = []; // x, y, size, alpha, seed
+    var arr = []; // x(uv), y(uv), size, alpha, seed
     for (var y = 0; y < sh; y++) {
       for (var x = 0; x < sw; x++) {
         p = y * sw + x;
-        // 透明底PNG：alpha<128 不生成粒子（抠图区域干净）
-        if (data[p * 4 + 3] < 128) continue;
+        if (data[p * 4 + 3] < 128) continue;   // 透明底抠图
         var gray = luma[p];
         var tex = Math.min(1, Math.abs(gray - base[p]) / 45);
         var w = 0;
         if (layer.mode === 'dark') {
-          // 黑粒子（白底上）：越暗越密，纹理处更实
           var darkness = (150 - gray) / 150;
           if (darkness <= 0.02) continue;
           w = darkness * (0.45 + 0.55 * tex);
         } else if (layer.mode === 'light') {
-          // 白粒子（黑底上）：亮部×纹理；均匀浅底(背景)纹理≈0被剔除
           if (tex < 0.10) continue;
           w = (gray / 255) * (0.25 + 0.75 * tex);
         } else if (layer.mode === 'lightCat') {
-          // 白粒子（黑底上，深色主体）：靠毛发纹理负像，淡化对亮度的依赖
           if (tex < 0.05) continue;
-          var lw = (gray / 255) * 0.55 + 0.45;
-          w = lw * (0.2 + 0.8 * tex);
-        } else if (layer.mode === 'lightFlat') {
-          // 白粒子（蒙版白区，版画亮部整块）
+          w = ((gray / 255) * 0.55 + 0.45) * (0.2 + 0.8 * tex);
+        } else if (layer.mode === 'darkflat') {
+          if (gray > 128) continue;
+          w = 0.9;
+        } else if (layer.mode === 'lightflat') {
           if (gray <= 128) continue;
           w = 0.9;
-        } else {
+        } else { // redflat
           if (gray <= 128) continue;
-          w = 1;
+          w = 0.95;
         }
-        // 密度分级
         if (Math.random() > w) continue;
         arr.push(
           (x + 0.5) / sw, (y + 0.5) / sh,
-          0.6 + w * 1.7 + Math.random() * 0.5,  // 大小分级
-          0.4 + w * 0.6,                         // 透明分级
-          Math.random()
+          0.6 + w * 1.6 + Math.random() * 0.5,
+          0.35 + w * 0.6,
+          Math.random(),
+          layer.color[0], layer.color[1], layer.color[2]
         );
       }
     }
 
-    var n = arr.length / 5;
+    var n = arr.length / 8;
     var buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.STATIC_DRAW);
@@ -303,11 +293,38 @@
   function loadLayer(layer) {
     var img = new Image();
     img.onload = function () {
-      try { sampleLayer(layer, img); } catch (e) { /* 采样失败静默降级 */ }
+      try { sampleLayer(layer, img); } catch (e) { /* 静默降级 */ }
     };
     img.src = layer.url;
   }
   layers.forEach(loadLayer);
+
+  /* ---------------- 满屏自由漂浮灰尘粒子（黑/白/灰，大小不一） ---------------- */
+  function buildDust() {
+    var N = 560;
+    var arr = [];
+    for (var i = 0; i < N; i++) {
+      // 颜色：黑、深灰、浅灰、白 随机（黑在白区可见、白在黑区可见，自然形成星尘）
+      var t = Math.random();
+      var g = t < 0.30 ? 0.10 + Math.random() * 0.12      // 黑/深灰
+            : t < 0.62 ? 0.30 + Math.random() * 0.30      // 中灰
+            : 0.78 + Math.random() * 0.20;                 // 浅灰/白
+      arr.push(
+        (Math.random() * 2.6 - 1.3), (Math.random() * 2.6 - 1.3),
+        // 大小：多数细小，少数大圆点（如图1的大灰点）
+        Math.random() < 0.10 ? 7 + Math.random() * 11 : 1.5 + Math.random() * 3.5,
+        0.15 + Math.random() * 0.45,
+        Math.random(),
+        g, g, g
+      );
+    }
+    var buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.STATIC_DRAW);
+    dust.buffer = buf;
+    dust.count = N;
+  }
+  var dust = {};
 
   /* ---------------- 尺寸 ---------------- */
   function resize() {
@@ -318,7 +335,7 @@
     canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.useProgram(prog);
-    gl.uniform1f(U.uPointSize, 1.5 * DPR);
+    gl.uniform1f(U.uPointSize, 1.6 * DPR);
     if (grainCanvas) {
       grainCanvas.width = W; grainCanvas.height = H;
       grainCanvas.style.width = W + 'px'; grainCanvas.style.height = H + 'px';
@@ -338,7 +355,7 @@
     for (var i = 0; i < id.data.length; i += 4) {
       var v = Math.random() * 255;
       id.data[i] = v; id.data[i + 1] = v; id.data[i + 2] = v;
-      id.data[i + 3] = Math.random() < 0.5 ? 0 : 26;
+      id.data[i + 3] = Math.random() < 0.5 ? 0 : 24;
     }
     tc.putImageData(id, 0, 0);
     grainTile = t;
@@ -361,77 +378,95 @@
   }
 
   /* ---------------- 绘制 ---------------- */
-  function drawBg() {
+  function drawBg(intensity) {
     gl.useProgram(bgProg);
     gl.disable(gl.BLEND);
     gl.bindBuffer(gl.ARRAY_BUFFER, bgBuf);
     gl.enableVertexAttribArray(BG.aPos);
     gl.vertexAttribPointer(BG.aPos, 2, gl.FLOAT, false, 8, 0);
+    gl.uniform1f(BG.uIntensity, intensity);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.enable(gl.BLEND);
     gl.useProgram(prog);
   }
 
-  function drawLayer(layer, scatter, alphaScale) {
-    if (!layer.buffer || layer.count === 0 || alphaScale <= 0.01) return;
-    gl.bindBuffer(gl.ARRAY_BUFFER, layer.buffer);
+  function drawPoints(buf, count, kx, ky, ox, oy, alpha, free) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    var STR = 32; // 8 floats * 4
     gl.enableVertexAttribArray(LOC.aPos);
-    gl.vertexAttribPointer(LOC.aPos, 2, gl.FLOAT, false, 20, 0);
+    gl.vertexAttribPointer(LOC.aPos, 2, gl.FLOAT, false, STR, 0);
     gl.enableVertexAttribArray(LOC.aSize);
-    gl.vertexAttribPointer(LOC.aSize, 1, gl.FLOAT, false, 20, 8);
+    gl.vertexAttribPointer(LOC.aSize, 1, gl.FLOAT, false, STR, 8);
     gl.enableVertexAttribArray(LOC.aAlpha);
-    gl.vertexAttribPointer(LOC.aAlpha, 1, gl.FLOAT, false, 20, 12);
+    gl.vertexAttribPointer(LOC.aAlpha, 1, gl.FLOAT, false, STR, 12);
     gl.enableVertexAttribArray(LOC.aSeed);
-    gl.vertexAttribPointer(LOC.aSeed, 1, gl.FLOAT, false, 20, 16);
+    gl.vertexAttribPointer(LOC.aSeed, 1, gl.FLOAT, false, STR, 16);
+    gl.enableVertexAttribArray(LOC.aColor);
+    gl.vertexAttribPointer(LOC.aColor, 3, gl.FLOAT, false, STR, 20);
 
-    gl.uniform1f(U.uProgress, scatter);
-    gl.uniform1f(U.uAlphaScale, alphaScale);
-    gl.uniform1f(U.uKX, layer.kx || 1);
-    gl.uniform1f(U.uKY, layer.ky || 1);
-    gl.uniform2f(U.uOff, layer.ox, layer.oy);
-    gl.uniform1f(U.uClipL, layer.clipL);
-    gl.uniform1f(U.uClipR, layer.clipR);
-    gl.uniform3f(U.uColor, layer.color[0], layer.color[1], layer.color[2]);
+    gl.uniform1f(U.uKX, kx);
+    gl.uniform1f(U.uKY, ky);
+    gl.uniform2f(U.uOff, ox, oy);
+    gl.uniform1f(U.uAlphaScale, alpha);
+    gl.uniform1i(U.uFree, free ? 1 : 0);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    gl.drawArrays(gl.POINTS, 0, layer.count);
+    gl.drawArrays(gl.POINTS, 0, count);
   }
 
   function frame(dt) {
     time += dt;
-
-    progress += (targetProgress - progress) * 0.08;
-    mouse.strength += (mouse.target - mouse.strength) * 0.15;
+    progress += (targetProgress - progress) * 0.07;
+    // 摄影机视差平滑跟随
+    par.x += (mouse.x - par.x) * 0.05;
+    par.y += (mouse.y - par.y) * 0.05;
 
     var p = progress;
-    var w1, w2, scatter1, scatter2;
-    if (SINGLE) {
-      // 单章节页面（猫）：标题常驻，滚动后段散开
-      w1 = 1; w2 = 0;
-      scatter1 = smoothstep(0.55, 0.95, p);
-      scatter2 = 0;
-    } else {
-      w1 = 1 - smoothstep(0.40, 0.52, p);
-      w2 = smoothstep(0.46, 0.58, p);
-      scatter1 = smoothstep(0.06, 0.42, p);
-      scatter2 = smoothstep(0.60, 0.95, p);
-    }
 
-    drawBg();
+    // 背景对比强度：图1(弱,偏白) → 图4(强,黑白分明)
+    var intensity = 0.30 + 0.70 * smoothstep(0.02, 0.5, p);
+    drawBg(intensity);
 
     gl.uniform1f(U.uTime, time);
-    gl.uniform2f(U.uMouse, mouse.x, mouse.y);
-    // 学原网页：小半径轻柔斥力，按住时稍强
-    gl.uniform1f(U.uMouseRadius, 0.16);
-    gl.uniform1f(U.uMouseStrength, mouse.strength * 0.06);
+    gl.uniform2f(U.uPar, par.x, par.y);
 
+    var chapter, focus, disperse, alphaCh;
+    if (SINGLE) {
+      chapter = 1;
+      focus = smoothstep(0.05, 0.55, p);          // 滚动前段：聚焦成像
+      disperse = smoothstep(0.72, 0.98, p);       // 滚到底：散开
+      alphaCh = 1;
+    } else {
+      var w1 = 1 - smoothstep(0.42, 0.54, p);
+      var w2 = smoothstep(0.46, 0.58, p);
+      chapter = w2 > 0.5 ? 2 : 1;
+      focus = chapter === 1
+        ? smoothstep(0.05, 0.40, p) * (1 - smoothstep(0.30, 0.44, p))
+        : smoothstep(0.50, 0.80, p) * (1 - smoothstep(0.86, 0.98, p));
+      disperse = chapter === 2 ? smoothstep(0.86, 0.98, p) : 0;
+      alphaCh = chapter === 1 ? w1 : w2;
+    }
+
+    gl.uniform1f(U.uProgress, focus);
+    gl.uniform1f(U.uDisperse, disperse);
+
+    // 人像图层
     for (var i = 0; i < layers.length; i++) {
       var L = layers[i];
-      if (L.chapter === 1) drawLayer(L, scatter1, w1);
-      else drawLayer(L, scatter2, w2);
+      if (L.chapter !== chapter) continue;
+      if (!L.buffer || L.count === 0) continue;
+      drawPoints(L.buffer, L.count, L.kx || 1, L.ky || 1, L.ox || 0, L.oy || 0,
+                 alphaCh, false);
+    }
+
+    // 满屏漂浮灰尘：始终存在（黑/灰/白粒子自带颜色，星尘般漂浮）
+    if (dust.buffer) {
+      gl.uniform1f(U.uProgress, 0);
+      gl.uniform1f(U.uDisperse, 0);
+      drawPoints(dust.buffer, dust.count, 1, 1, 0, 0, 0.9, true);
     }
 
     drawGrain();
-    updateDom(p, w2);
+    updateDom(p, chapter);
   }
 
   /* ---------------- DOM 文字层 ---------------- */
@@ -440,7 +475,8 @@
   var wordTextEl = document.getElementById('vg-word-text');
   var ch2El = document.getElementById('vg-ch2');
   var chapterEl = document.getElementById('vg-chapter');
-  var WORDS = ['Elimar', 'regret', 'darkness', 'redemption', 'van Gogh'];
+  var WORDS = (window.VANGOGH_CONFIG && window.VANGOGH_CONFIG.words) ||
+              ['Elimar', 'regret', 'darkness', 'redemption', 'van Gogh'];
   var wordIdx = 0, wordStarted = false;
 
   function cycleWords() {
@@ -457,24 +493,20 @@
     setTimeout(showNext, 1600);
   }
 
-  function updateDom(p, w2) {
-    if (SINGLE) return; // 单章节页面（猫）：标题常驻，无章节切换
-    if (titleEl) titleEl.classList.toggle('is-hidden', p > 0.05);
-    if (wordEl) wordEl.classList.toggle('is-hidden', w2 > 0.5);
-    if (chapterEl) chapterEl.textContent = w2 > 0.5 ? 'CHAPTER 02/' : 'CHAPTER 01/';
-    if (ch2El) ch2El.classList.toggle('is-visible', w2 > 0.5);
+  function updateDom(p, chapter) {
+    if (SINGLE) return; // 单主体页：标题常驻
+    if (titleEl) titleEl.classList.toggle('is-hidden', p > 0.05 && chapter === 1);
+    if (wordEl) wordEl.classList.toggle('is-hidden', chapter === 2);
+    if (chapterEl) chapterEl.textContent = chapter === 2 ? 'CHAPTER 02/' : 'CHAPTER 01/';
+    if (ch2El) ch2El.classList.toggle('is-visible', chapter === 2);
   }
 
-  /* ---------------- 交互 ---------------- */
+  /* ---------------- 交互：鼠标=摄影机视角平移（非斥力） ---------------- */
   window.addEventListener('pointermove', function (e) {
-    mouse.x = (e.clientX / W) * 2 - 1;
+    mouse.x = (e.clientX / W) * 2 - 1;   // -1..1
     mouse.y = 1 - (e.clientY / H) * 2;
-    mouse.target = 1;
     if (!wordStarted) { wordStarted = true; cycleWords(); }
   });
-  window.addEventListener('pointerdown', function () { mouse.target = 2.5; });
-  window.addEventListener('pointerup', function () { mouse.target = 1; });
-  document.addEventListener('pointerleave', function () { mouse.target = 0; });
 
   function onScroll() {
     var max = document.documentElement.scrollHeight - window.innerHeight;
@@ -499,6 +531,7 @@
 
   function init() {
     resize();
+    buildDust();
     onScroll();
     requestAnimationFrame(loop);
   }
