@@ -47,35 +47,65 @@
     'uniform float uAlphaScale;',
     'uniform vec2 uPar;',         // 摄影机视差（鼠标）
     'uniform int uFree;',         // 1=自由灰尘粒子
+    'uniform int uVortex;',       // 1=开场黑洞涡旋粒子
+    'uniform float uAspect;',     // 屏幕宽高比（圆形修正）
+    'uniform float uBurst;',      // 爆发：流速加快
     'varying float vAlpha;',
     'varying vec3 vColor;',
     'float hash(float n){ return fract(sin(n) * 43758.5453123); }',
+    'float hash2(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }',
     'void main(){',
     '  vec2 base;',
     '  vec2 drift;',
     '  float parAmt;',
-    '  if (uFree == 1) {',
+    '  float twinkle = 1.0;',
+    '  if (uVortex == 1) {',
+    // 涡旋粒子：aPos.x = 半径归一(0..1, 晕圈内), aPos.y = 初始角
+    '    float rn = aPos.x;',
+    '    float holeR = 0.30;',
+    '    float haloW = 0.42;',
+    '    float r = holeR + 0.03 + rn * haloW;',
+    // 逆时针螺旋：内快外慢；爆发时加速
+    '    float spd = mix(1.1, 0.28, rn) * (1.0 + uBurst * 1.8);',
+    '    float ang = aPos.y - uTime * spd;',
+    // 缓慢径向呼吸（吸积盘涨落）
+    '    r += 0.02 * sin(uTime * 0.6 + aSeed * 20.0);',
+    '    vec2 cpos = vec2(cos(ang) * r / uAspect, sin(ang) * r) + vec2(0.0, -0.04);',
+    // 布朗扰动：5% 粒子每帧随机偏移（用高频噪声近似）
+    '    vec2 br = vec2(hash2(vec2(aSeed*7.0, floor(uTime*8.0)))),',
+    '                 hash2(vec2(aSeed*13.0, floor(uTime*8.0)))) - 0.5;',
+    '    base = cpos + br * 0.012;',
+    '    drift = vec2(0.0);',
+    '    parAmt = 0.01;',
+    // 呼吸闪烁：亮度周期涨落；边缘粒子更闪
+    '    twinkle = 0.55 + 0.45 * sin(uTime * (1.2 + aSeed) + aSeed * 30.0);',
+    '  } else if (uFree == 1) {',
     '    base = aPos;',                                  // 灰尘：已是 NDC
-    '    drift = vec2(sin(uTime*0.13 + aSeed*40.0) + sin(uTime*0.05 + aSeed*17.0),',
-    '                  cos(uTime*0.11 + aSeed*31.0) + sin(uTime*0.07 + aSeed*23.0)) * 0.05;',
+    // 漂浮灰尘：多频正弦漂移，方向各异，流动感强
+    '    drift = vec2(sin(uTime*0.15 + aSeed*40.0) + 0.6*sin(uTime*0.06 + aSeed*17.0),',
+    '                  cos(uTime*0.12 + aSeed*31.0) + 0.6*sin(uTime*0.08 + aSeed*23.0)) * 0.075;',
+    '    drift += vec2(uTime * 0.004 * (hash(aSeed*3.0)-0.5), uTime * 0.003 * (hash(aSeed*5.0)-0.5));',
     '    parAmt = 0.02 + hash(aSeed*7.1) * 0.05;',       // 远/近层视差不同（景深）
+    // 呼吸闪烁
+    '    twinkle = 0.6 + 0.4 * sin(uTime * (0.7 + hash(aSeed*9.0)) + aSeed * 40.0);',
     '  } else {',
     '    vec2 img = vec2((aPos.x - 0.5) * 2.0 * uKX + uOff.x, (0.5 - aPos.y) * 2.0 * uKY + uOff.y);',
     // 人像粒子的自由漂浮位置：稳定的大半径散布
     '    float ang = aSeed * 6.2831853;',
     '    float rad = 0.7 + hash(aSeed * 3.3) * 1.9;',
     '    vec2 freePos = vec2(cos(ang), sin(ang)) * rad;',
-    '    drift = vec2(sin(uTime*0.10 + aSeed*50.0), cos(uTime*0.12 + aSeed*38.0)) * 0.03;',
-    '    parAmt = 0.015;',
-    // 聚焦进度（带粒子级相位，让聚焦更有机）；滚到底再散开
-    '    float ph = smoothstep(0.0, 0.35, uProgress * (1.0 + 0.35 * hash(aSeed * 5.7)) - 0.18 * hash(aSeed * 9.1));',
+    // 聚焦进度：粒子级小相位（收紧抖动 → 成像更清晰）；滚到底再散开
+    '    float ph = smoothstep(0.0, 0.25, uProgress * (1.0 + 0.12 * hash(aSeed * 5.7)) - 0.05 * hash(aSeed * 9.1));',
     '    ph = ph * (1.0 - uDisperse);',
+    // 呼吸漂移仅在未聚焦时存在，聚焦后归位（成像锐利）
+    '    drift = vec2(sin(uTime*0.10 + aSeed*50.0), cos(uTime*0.12 + aSeed*38.0)) * 0.03 * (1.0 - ph);',
+    '    parAmt = 0.015;',
     '    base = mix(freePos, img, ph);',
     '  }',
     '  vec2 finalPos = base + drift + uPar * parAmt;',
     '  gl_Position = vec4(finalPos, 0.0, 1.0);',
     '  gl_PointSize = aSize * uPointSize;',
-    '  vAlpha = aAlpha * uAlphaScale;',
+    '  vAlpha = aAlpha * uAlphaScale * twinkle;',
     '  vColor = aColor;',
     '}'
   ].join('\n');
@@ -93,22 +123,75 @@
     '}'
   ].join('\n');
 
-  /* ---------------- 背景着色器：柔和左白右黑渐变（无硬分界） ---------------- */
+  /* ---------------- 背景着色器：开场宇宙黑洞漩涡 → 柔和左白右黑渐变 ----------------
+     uIntro=1：中心纯黑圆(黑洞) + 外围灰白晕 + 极光式裙边涟漪(流动/呼吸/卷曲)
+     uIntro=0：柔和宽渐变（无硬分界） */
   var BG_VSH = 'attribute vec2 aPos; varying vec2 vUv; void main(){ vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }';
   var BG_FSH = [
     'precision mediump float;',
     'varying vec2 vUv;',
-    'uniform float uIntensity;',   // 滚动越深，黑白对比越强（图1→图4）
+    'uniform float uIntensity;',   // 渐变页：黑白对比强度
+    'uniform float uIntro;',       // 1=开场黑洞, 0=渐变
+    'uniform float uTime;',
+    'uniform float uBurst;',       // 爆发：流光加速扫过
+    // 噪声（极光卷曲/涟漪）
+    'float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }',
+    'float noise(vec2 p){',
+    '  vec2 i=floor(p); vec2 f=fract(p);',
+    '  f=f*f*(3.0-2.0*f);',
+    '  float a=hash(i), b=hash(i+vec2(1.0,0.0)), c=hash(i+vec2(0.0,1.0)), d=hash(i+vec2(1.0,1.0));',
+    '  return mix(mix(a,b,f.x), mix(c,d,f.x), f.y);',
+    '}',
+    'float fbm(vec2 p){',
+    '  float v=0.0, a=0.5;',
+    '  for(int i=0;i<4;i++){ v+=a*noise(p); p*=2.03; a*=0.5; }',
+    '  return v;',
+    '}',
     'void main(){',
-    '  float x = (vUv.x - 0.5) * 2.0;',
-    // 很宽的柔和过渡，中心在左 1/3；对比强度随滚动 0.35→1
-    '  float b = smoothstep(-0.95, 0.95, (x + 0.15) * 1.05);',
-    '  vec3 white = vec3(0.97, 0.97, 0.96);',
-    '  vec3 black = vec3(0.02, 0.02, 0.02);',
-    '  vec3 g = mix(white, black, b);',
-    // 起始(图1)整体偏白、对比弱；滚动后黑白分明
-    '  g = mix(vec3(0.86), g, uIntensity);',
-    '  gl_FragColor = vec4(g, 1.0);',
+    '  vec2 uv = vUv;',
+    // ---- 渐变背景 ----
+    '  float x = (uv.x - 0.5) * 2.0;',
+    '  float gb = smoothstep(-0.95, 0.95, (x + 0.15) * 1.05);',
+    '  vec3 gcol = mix(vec3(0.97,0.97,0.96), vec3(0.02,0.02,0.02), gb);',
+    '  gcol = mix(vec3(0.86), gcol, uIntensity);',
+    // ---- 开场黑洞漩涡 ----
+    // 非对称纵横比修正：用屏幕宽高比缩放 y
+    '  vec2 p = uv - vec2(0.5, 0.52);',
+    '  p.x *= uAspect;',
+    '  float r = length(p);',
+    '  float a = atan(p.y, p.x);',
+    // 呼吸：半径缓慢涨落
+    '  float breathe = 0.035 * sin(uTime * 0.55) + 0.02 * sin(uTime * 0.31);',
+    // 裙边涟漪：多条沿角度旋转的同心波，被 fbm 扭曲（卷曲/折叠/拉扯）
+    '  float t = uTime * (0.12 + uBurst * 0.35);',
+    '  float warp = fbm(vec2(a * 1.7, r * 3.5 - t * 1.2));',
+    '  float ripple = sin((r - t * 0.22) * 26.0 + a * 3.0 + warp * 5.0);',
+    '  ripple += 0.5 * sin((r - t * 0.15) * 47.0 - a * 2.0 + warp * 7.0);',
+    '  ripple = ripple * 0.5 + 0.5;',
+    // 黑洞半径（约屏幕1/3，纵向因aspect修正）
+    '  float holeR = 0.30 + breathe;',
+    // 纯黑洞
+    '  float hole = 1.0 - smoothstep(holeR - 0.015, holeR + 0.03, r);',
+    // 外围灰白晕圈（宽度约15%屏高）
+    '  float halo = smoothstep(holeR + 0.02, holeR + 0.22, r);',
+    '  halo *= 1.0 - smoothstep(holeR + 0.30, holeR + 0.75, r);',
+    // 晕圈基底亮度（外白向内暗，像图1/2）
+    '  float base = smoothstep(holeR, holeR + 0.6, r);',
+    // 涟漪只存在于晕圈，形成一圈圈裙边
+    '  float skirt = halo * pow(ripple, 2.2) * 0.85;',
+    // 呼吸闪烁：亮度周期性涨落
+    '  float tw = 0.75 + 0.25 * sin(uTime * 0.9 + ripple * 4.0);',
+    // 极光光带在晕圈内外缘最亮
+    '  float veil = halo * (0.5 + 0.5 * warp) * (0.6 + 0.4 * tw);',
+    // 黑洞内部全黑；晕圈为灰白光带；最外为白底
+    '  vec3 vcol = vec3(base) ;',
+    '  vcol += vec3(skirt * tw) * 0.9 + vec3(veil) * 0.10;',
+    '  vcol = clamp(vcol, 0.0, 1.0);',
+    // 黑洞纯黑
+    '  vcol = mix(vcol, vec3(0.0), hole);',
+    // 混合：intro=1 用漩涡，0 用渐变
+    '  vec3 col = mix(gcol, vcol, uIntro);',
+    '  gl_FragColor = vec4(col, 1.0);',
     '}'
   ].join('\n');
 
@@ -138,12 +221,16 @@
   };
   var U = {};
   ['uTime', 'uProgress', 'uDisperse', 'uKX', 'uKY', 'uOff', 'uPointSize',
-   'uAlphaScale', 'uPar', 'uFree'].forEach(function (n) {
+   'uAlphaScale', 'uPar', 'uFree', 'uVortex', 'uAspect', 'uBurst'].forEach(function (n) {
     U[n] = gl.getUniformLocation(prog, n);
   });
   var BG = {
     aPos: gl.getAttribLocation(bgProg, 'aPos'),
-    uIntensity: gl.getUniformLocation(bgProg, 'uIntensity')
+    uIntensity: gl.getUniformLocation(bgProg, 'uIntensity'),
+    uIntro: gl.getUniformLocation(bgProg, 'uIntro'),
+    uTime: gl.getUniformLocation(bgProg, 'uTime'),
+    uBurst: gl.getUniformLocation(bgProg, 'uBurst'),
+    uAspect: gl.getUniformLocation(bgProg, 'uAspect')
   };
 
   var bgBuf = gl.createBuffer();
@@ -160,6 +247,7 @@
   var par = { x: 0, y: 0 };
   var progress = 0, targetProgress = 0;
   var time = 0;
+  var currentBurst = 0;          // 爆发强度（开场后周期性流光）
 
   /* 页面配置：/cat/ 单主体；/vangogh/ 双章节（梵高 + RDR2） */
   var CFG = window.VANGOGH_CONFIG || {};
@@ -250,15 +338,17 @@
         var tex = Math.min(1, Math.abs(gray - base[p]) / 45);
         var w = 0;
         if (layer.mode === 'dark') {
-          var darkness = (150 - gray) / 150;
+          // 黑粒子：暗部（放宽阈值，毛发/轮廓细节更密）
+          var darkness = (165 - gray) / 165;
           if (darkness <= 0.02) continue;
-          w = darkness * (0.45 + 0.55 * tex);
+          w = darkness * (0.55 + 0.45 * tex);
         } else if (layer.mode === 'light') {
-          if (tex < 0.10) continue;
-          w = (gray / 255) * (0.25 + 0.75 * tex);
+          if (tex < 0.08) continue;
+          w = (gray / 255) * (0.30 + 0.70 * tex);
         } else if (layer.mode === 'lightCat') {
-          if (tex < 0.05) continue;
-          w = ((gray / 255) * 0.55 + 0.45) * (0.2 + 0.8 * tex);
+          // 深色主体：靠毛发纹理负像，纹理阈值放宽、权重提高 → 成像更密更清晰
+          if (tex < 0.035) continue;
+          w = ((gray / 255) * 0.45 + 0.55) * (0.35 + 0.65 * tex);
         } else if (layer.mode === 'darkflat') {
           if (gray > 128) continue;
           w = 0.9;
@@ -272,8 +362,8 @@
         if (Math.random() > w) continue;
         arr.push(
           (x + 0.5) / sw, (y + 0.5) / sh,
-          0.6 + w * 1.6 + Math.random() * 0.5,
-          0.35 + w * 0.6,
+          0.5 + w * 1.3 + Math.random() * 0.4,
+          0.45 + w * 0.55,
           Math.random(),
           layer.color[0], layer.color[1], layer.color[2]
         );
@@ -325,6 +415,40 @@
     dust.count = N;
   }
   var dust = {};
+
+  /* ---------------- 开场黑洞涡旋粒子（吸积盘） ----------------
+     aPos.x = 半径归一 rn(0..1, 晕圈内)；aPos.y = 初始角(0..2π)。
+     密度：黑洞边缘最高、向外指数衰减；尺寸 0.5~2px 小光点为主。 */
+  function buildVortex() {
+    var N = 3600;
+    var arr = [];
+    for (var i = 0; i < N; i++) {
+      // 幂分布：多数粒子靠近内缘（黑洞边缘密度最高）
+      var rn = Math.pow(Math.random(), 1.9);
+      var ang = Math.random() * Math.PI * 2;
+      // 尺寸：80% 小光点，少数大粒子作视觉锚点
+      var big = Math.random() < 0.06;
+      var sz = big ? 2.2 + Math.random() * 1.2 : 0.6 + Math.random() * 1.1;
+      // 颜色：黑/灰/白（白在暗晕、黑在亮区）
+      var t = Math.random();
+      var g = t < 0.32 ? 0.08 + Math.random() * 0.15
+            : t < 0.66 ? 0.35 + Math.random() * 0.30
+            : 0.80 + Math.random() * 0.20;
+      arr.push(
+        rn, ang,
+        sz,
+        0.3 + Math.random() * 0.5,
+        Math.random(),
+        g, g, g
+      );
+    }
+    var buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.STATIC_DRAW);
+    vortex.buffer = buf;
+    vortex.count = N;
+  }
+  var vortex = {};
 
   /* ---------------- 尺寸 ---------------- */
   function resize() {
@@ -378,19 +502,23 @@
   }
 
   /* ---------------- 绘制 ---------------- */
-  function drawBg(intensity) {
+  function drawBg(intensity, intro, burst) {
     gl.useProgram(bgProg);
     gl.disable(gl.BLEND);
     gl.bindBuffer(gl.ARRAY_BUFFER, bgBuf);
     gl.enableVertexAttribArray(BG.aPos);
     gl.vertexAttribPointer(BG.aPos, 2, gl.FLOAT, false, 8, 0);
     gl.uniform1f(BG.uIntensity, intensity);
+    gl.uniform1f(BG.uIntro, intro);
+    gl.uniform1f(BG.uTime, time);
+    gl.uniform1f(BG.uBurst, burst);
+    gl.uniform1f(BG.uAspect, W / H);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.enable(gl.BLEND);
     gl.useProgram(prog);
   }
 
-  function drawPoints(buf, count, kx, ky, ox, oy, alpha, free) {
+  function drawPoints(buf, count, kx, ky, ox, oy, alpha, free, vortex) {
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     var STR = 32; // 8 floats * 4
     gl.enableVertexAttribArray(LOC.aPos);
@@ -409,6 +537,9 @@
     gl.uniform2f(U.uOff, ox, oy);
     gl.uniform1f(U.uAlphaScale, alpha);
     gl.uniform1i(U.uFree, free ? 1 : 0);
+    gl.uniform1i(U.uVortex, vortex ? 1 : 0);
+    gl.uniform1f(U.uAspect, W / H);
+    gl.uniform1f(U.uBurst, currentBurst);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.drawArrays(gl.POINTS, 0, count);
   }
@@ -422,9 +553,15 @@
 
     var p = progress;
 
-    // 背景对比强度：图1(弱,偏白) → 图4(强,黑白分明)
-    var intensity = 0.30 + 0.70 * smoothstep(0.02, 0.5, p);
-    drawBg(intensity);
+    // 开场（顶部）：宇宙黑洞漩涡；滚动后淡出 → 柔和渐变
+    var intro = 1 - smoothstep(0.02, 0.16, p);
+    // 爆发：周期性流光快速扫过（每约 9 秒一次）
+    var burst = Math.pow(Math.max(0, Math.sin(time * 0.35)), 3) * (0.4 + 0.6 * intro);
+    currentBurst = burst;
+
+    // 背景：开场漩涡 / 渐变页对比强度
+    var intensity = 0.30 + 0.70 * smoothstep(0.14, 0.5, p);
+    drawBg(intensity, intro, burst);
 
     gl.uniform1f(U.uTime, time);
     gl.uniform2f(U.uPar, par.x, par.y);
@@ -432,7 +569,7 @@
     var chapter, focus, disperse, alphaCh;
     if (SINGLE) {
       chapter = 1;
-      focus = smoothstep(0.05, 0.55, p);          // 滚动前段：聚焦成像
+      focus = smoothstep(0.10, 0.55, p);          // 开场之后：聚焦成像
       disperse = smoothstep(0.72, 0.98, p);       // 滚到底：散开
       alphaCh = 1;
     } else {
@@ -440,36 +577,45 @@
       var w2 = smoothstep(0.46, 0.58, p);
       chapter = w2 > 0.5 ? 2 : 1;
       focus = chapter === 1
-        ? smoothstep(0.05, 0.40, p) * (1 - smoothstep(0.30, 0.44, p))
+        ? smoothstep(0.10, 0.40, p) * (1 - smoothstep(0.30, 0.44, p))
         : smoothstep(0.50, 0.80, p) * (1 - smoothstep(0.86, 0.98, p));
       disperse = chapter === 2 ? smoothstep(0.86, 0.98, p) : 0;
       alphaCh = chapter === 1 ? w1 : w2;
     }
 
+    // 开场涡旋粒子（吸积盘）：仅 intro 阶段可见
+    if (vortex.buffer && intro > 0.01) {
+      gl.uniform1f(U.uProgress, 0);
+      gl.uniform1f(U.uDisperse, 0);
+      drawPoints(vortex.buffer, vortex.count, 1, 1, 0, 0, intro, false, true);
+    }
+
+    // 人像图层（开场后淡入）
     gl.uniform1f(U.uProgress, focus);
     gl.uniform1f(U.uDisperse, disperse);
-
-    // 人像图层
+    var portraitA = (1 - intro) * alphaCh;
     for (var i = 0; i < layers.length; i++) {
       var L = layers[i];
       if (L.chapter !== chapter) continue;
       if (!L.buffer || L.count === 0) continue;
       drawPoints(L.buffer, L.count, L.kx || 1, L.ky || 1, L.ox || 0, L.oy || 0,
-                 alphaCh, false);
+                 portraitA, false, false);
     }
 
-    // 满屏漂浮灰尘：始终存在（黑/灰/白粒子自带颜色，星尘般漂浮）
+    // 满屏漂浮灰尘：始终存在（开场淡、后续强），黑/灰/白星尘
     if (dust.buffer) {
       gl.uniform1f(U.uProgress, 0);
       gl.uniform1f(U.uDisperse, 0);
-      drawPoints(dust.buffer, dust.count, 1, 1, 0, 0, 0.9, true);
+      var dustA = 0.30 + 0.65 * (1 - intro);
+      drawPoints(dust.buffer, dust.count, 1, 1, 0, 0, dustA, true, false);
     }
 
     drawGrain();
-    updateDom(p, chapter);
+    updateDom(p, chapter, intro);
   }
 
   /* ---------------- DOM 文字层 ---------------- */
+  var introEl = document.getElementById('vg-intro');
   var titleEl = document.getElementById('vg-title');
   var wordEl = document.getElementById('vg-word');
   var wordTextEl = document.getElementById('vg-word-text');
@@ -493,9 +639,15 @@
     setTimeout(showNext, 1600);
   }
 
-  function updateDom(p, chapter) {
-    if (SINGLE) return; // 单主体页：标题常驻
-    if (titleEl) titleEl.classList.toggle('is-hidden', p > 0.05 && chapter === 1);
+  function updateDom(p, chapter, intro) {
+    // 开场引言：顶部显示，滚入正文后淡出
+    if (introEl) introEl.classList.toggle('is-hidden', intro < 0.6);
+    if (SINGLE) {
+      // 单主体页：标题在开场后显现
+      if (titleEl) titleEl.classList.toggle('is-hidden', intro > 0.4);
+      return;
+    }
+    if (titleEl) titleEl.classList.toggle('is-hidden', (p > 0.18 && chapter === 1) || intro > 0.4);
     if (wordEl) wordEl.classList.toggle('is-hidden', chapter === 2);
     if (chapterEl) chapterEl.textContent = chapter === 2 ? 'CHAPTER 02/' : 'CHAPTER 01/';
     if (ch2El) ch2El.classList.toggle('is-visible', chapter === 2);
@@ -532,6 +684,7 @@
   function init() {
     resize();
     buildDust();
+    buildVortex();
     onScroll();
     requestAnimationFrame(loop);
   }
