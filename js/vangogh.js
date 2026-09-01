@@ -85,8 +85,10 @@
     '  float clip = step(uClipL, base.x) * step(base.x, uClipR);',
     // 尘埃/散落锚点：全屏随机
     '  vec2 anchor = vec2(hash(vec2(aSeed, 1.7)) * 2.0 - 1.0, hash(vec2(aSeed, 3.1)) * 2.0 - 1.0);',
-    // 主体粒子错峰汇聚（uFocus 0→1，按 seed 陆续归位）
+    // 主体粒子错峰汇聚（uFocus 0→1，按 seed 陆续归位）；轮廓粒子更早汇聚（特写阶段轮廓先清晰）
     '  float local = smoothstep(aSeed * 0.7, aSeed * 0.7 + 0.3, uFocus) * (1.0 - aAmbient);',
+    '  float edgeFocus = smoothstep(0.04, 0.22, uFocus) * aEdge;',
+    '  local = max(local, edgeFocus);',
     // 汇聚前的自由散落：噪声流场驱动，无序漂浮（非单向），速度各异
     '  float spd = 0.05 + aSeed * 0.14;',
     '  vec2 f1 = vec2(vnoise(anchor * 2.2 + vec2(uTime * spd, 0.0)), vnoise(anchor * 2.2 + vec2(0.0, uTime * spd)));',
@@ -99,15 +101,11 @@
     '  float rad = 0.6 + 1.8 * hash(aPos * vec2(97.3, 51.1) + aSeed);',
     '  vec2 scattered = pos + vec2(cos(ang), sin(ang)) * rad * (1.0 - aAmbient);',
     '  pos = mix(pos, scattered, uProgress);',
-    // 微运动：尘埃持续无序漂浮(幅度大)；主体成型后小范围微动(活着不静止)
-    '  float mAmp = aAmbient * 0.10 + (1.0 - aAmbient) * mix(0.06, 0.010, local);',
-    '  vec2 mN = vec2(vnoise(aPos * 5.0 + vec2(uTime * 0.15, aSeed * 9.0)),',
-    '                 vnoise(aPos * 5.0 + vec2(aSeed * 5.0, uTime * 0.18)));',
+    // 微运动：尘埃持续无序漂浮(幅度大)；主体成型后小范围缓慢漂移(活着、不抽搐、不静止)
+    '  float mAmp = aAmbient * 0.10 + (1.0 - aAmbient) * mix(0.06, 0.012, local);',
+    '  vec2 mN = vec2(vnoise(aPos * 5.0 + vec2(uTime * 0.12, aSeed * 9.0)),',
+    '                 vnoise(aPos * 5.0 + vec2(aSeed * 5.0, uTime * 0.14)));',
     '  pos += (mN - 0.5) * 2.0 * mAmp;',
-    // ~15% 主体粒子 12Hz 高频微抖（光影跳跃感）
-    '  float vib = step(0.85, hash(vec2(aSeed, 9.2)));',
-    '  vec2 hp = vec2(sin(uTime * 75.0 + aSeed * 200.0), cos(uTime * 75.0 + aSeed * 170.0)) * 0.006 * vib * local;',
-    '  pos += hp;',
     // 鼠标斥力（vangogh模式；电影模式强度为0）
     '  vec2 delta = pos - uMouse;',
     '  float len = max(length(delta), 0.0001);',
@@ -116,18 +114,21 @@
     // 相机视差：鼠标移动=摄影机偏移，近处粒子位移大（原网页交互方式）
     '  vec2 par = uView * (0.25 + aSeed * 0.75);',
     '  vec2 finalPos = pos + push + par;',
-    // 粒子大小：尘埃大号常驻（开场偏大、大小不一）；主体汇聚时新粒子短暂脉冲突显、成型后整体变小
-    '  float pulse = local * (1.0 - local) * 1.6;',
+    // 粒子大小：尘埃大号常驻（开场偏大、大小不一）；主体汇聚时轻微脉冲、成型后整体变小但仍有大有小
+    '  float pulse = local * (1.0 - local) * 0.8;',
     '  vGlint = pulse * (1.0 - aAmbient);',
     '  float formed = local * (1.0 - aAmbient);',
-    '  float baseSize = aSize * (1.0 - 0.45 * formed);',
-    // 少数粒子低频变大（大颗粒数量少、出现频率低，成型后依然偶现）
-    '  float bigGate = step(0.965, hash(vec2(aSeed, 3.3)));',
-    '  float big = bigGate * (0.8 + 1.6 * (0.5 + 0.5 * sin(uTime * 0.25 + aSeed * 40.0))) * (aAmbient * 0.4 + formed);',
-    '  float size = baseSize + big + vGlint * 1.2;',
-    // 轮廓粒子沿剪影边缘小范围流动（活着，不完全静止）
-    '  vec2 eFlow = vec2(vnoise(aPos * 3.0 + vec2(uTime * 0.10, aSeed * 7.0)),',
-    '                   vnoise(aPos * 3.0 + vec2(aSeed * 7.0, uTime * 0.10))) * 0.030 * aEdge * local;',
+    // 尘埃(未聚合)整体放大 1.4 倍；主体成型后收缩到 0.62 倍；轮廓粒子保持 0.92 倍(特写阶段轮廓大而清晰)
+    '  float formScale = mix(1.0, mix(0.62, 0.92, aEdge), local);',
+    '  float baseSize = aSize * (aAmbient * 1.4 + (1.0 - aAmbient) * formScale);',
+    // 少数粒子低频变大（大颗粒数量少、出现频率低，成型后依然偶现）；频率慢(0.18rad/s)无闪烁
+    '  float bigGate = step(0.95, hash(vec2(aSeed, 3.3)));',
+    '  float big = bigGate * (0.6 + 1.8 * (0.5 + 0.5 * sin(uTime * 0.18 + aSeed * 40.0))) * (aAmbient * 1.2 + formed);',
+    '  float size = baseSize + big + vGlint * 0.8;',
+    // 轮廓粒子沿剪影边缘小范围流动：居中平滑噪声漂移(不抽搐、不单向)，缓慢有流动感
+    '  vec2 eN = vec2(vnoise(aPos * 2.5 + vec2(uTime * 0.06, aSeed * 7.0)),',
+    '                 vnoise(aPos * 2.5 + vec2(aSeed * 7.0, uTime * 0.06)));',
+    '  vec2 eFlow = (eN - 0.5) * 2.0 * 0.022 * aEdge * local;',
     '  finalPos += eFlow;',
     '  gl_Position = vec4(finalPos, 0.0, 1.0);',
     '  gl_PointSize = size * uPointSize * clip;',
@@ -357,31 +358,31 @@
         var w = 0, sz, al, edgeFlag = 0;
         if (layer.mode === 'ghost') {
           // 幽灵轮廓：大模糊身体掩膜 → 稀疏、大粒、低透明的模糊虚影；
-          // 叠加剪影边缘粒子（抠图轮廓），适度清晰地勾勒出猫的外形，且沿边缘小范围流动
+          // 叠加剪影边缘粒子（抠图轮廓），清晰勾勒猫的外形（特写阶段轮廓先明显），且沿边缘小范围流动
           var body = Math.max(0, 1 - baseBig[p] / 200);
           var isEdge = edgeMask[p];
           if (body < 0.15 && !isEdge) continue;
           edgeFlag = isEdge;
-          w = body * 0.5 + isEdge * 0.6;
-          sz = (2.0 + Math.random() * 2.4) * (1.0 - isEdge * 0.35);
-          al = 0.05 + body * 0.10 + isEdge * 0.22;
+          w = body * 0.5 + isEdge * 0.95;
+          sz = (2.0 + Math.random() * 2.4) * (1.0 - isEdge * 0.10) * (0.8 + isEdge * 0.5);
+          al = 0.05 + body * 0.10 + isEdge * 0.34;
         } else if (layer.mode === 'dark') {
-          // 黑粒子（白底上）：越暗越密，纹理处更实
+          // 黑粒子（白底上）：越暗越密，纹理处更实；尺寸方差大（组成猫的粒子有大有小）
           var darkness = (150 - gray) / 150;
           if (darkness <= 0.02) continue;
           w = darkness * (0.45 + 0.55 * tex);
-          sz = 0.6 + w * 1.7 + Math.random() * 0.5; al = 0.4 + w * 0.6;
+          sz = (0.6 + w * 1.7 + Math.random() * 0.5) * (0.7 + Math.random() * 1.0); al = 0.4 + w * 0.6;
         } else if (layer.mode === 'light') {
           // 白粒子（黑底上）：亮部×纹理；均匀浅底(背景)纹理≈0被剔除
           if (tex < 0.10) continue;
           w = (gray / 255) * (0.25 + 0.75 * tex);
-          sz = 0.6 + w * 1.7 + Math.random() * 0.5; al = 0.4 + w * 0.6;
+          sz = (0.6 + w * 1.7 + Math.random() * 0.5) * (0.7 + Math.random() * 1.0); al = 0.4 + w * 0.6;
         } else if (layer.mode === 'lightCat') {
-          // 白粒子（黑底上，深色主体）：靠毛发纹理负像，淡化对亮度的依赖（勾勒轮廓/毛发）
+          // 白粒子（黑底上，深色主体）：靠毛发纹理负像，淡化对亮度的依赖（勾勒轮廓/毛发）；尺寸方差大
           if (tex < 0.05) continue;
           var lw = (gray / 255) * 0.55 + 0.45;
           w = lw * (0.2 + 0.8 * tex);
-          sz = 0.55 + w * 1.5 + Math.random() * 0.5; al = 0.45 + w * 0.55;
+          sz = (0.55 + w * 1.5 + Math.random() * 0.5) * (0.7 + Math.random() * 1.1); al = 0.45 + w * 0.55;
         } else if (layer.mode === 'lightFlat') {
           // 白粒子（蒙版白区，版画亮部整块）
           if (gray <= 128) continue;
@@ -419,15 +420,15 @@
     var arr = [];
     while (arr.length / 7 < layer.dust) {
       var x = Math.random();
-      // 右侧密度偏置：左半屏随机舍弃一部分，使画面右侧粒子更密集
-      if (x < 0.5 && Math.random() < 0.4) continue;
-      // 大小不一：多数中等偏大，少数明显大颗粒（开场尘埃感）
-      var sz = 1.0 + Math.random() * 2.2;
-      if (Math.random() < 0.12) sz += 2.5 + Math.random() * 3.5;
+      // 右侧密度偏置：越靠右保留概率越高（左~45% → 右~100%），画面右侧更密集
+      if (Math.random() > 0.45 + 0.55 * x) continue;
+      // 大小不一、整体偏大：多数中大粒，约1/5为明显大颗粒（开场尘埃感，参考图2）
+      var sz = 1.6 + Math.random() * 3.0;
+      if (Math.random() < 0.22) sz += 3.0 + Math.random() * 5.0;
       arr.push(
         x, Math.random(),                        // 全屏随机位置（右侧偏密）
-        sz,                                      // 大小不一（含少数大颗粒）
-        0.30 + Math.random() * 0.45,             // alpha 偏高、更可见
+        sz,                                      // 大小不一、整体偏大（含明显大颗粒）
+        0.32 + Math.random() * 0.45,             // alpha 偏高、更可见
         Math.random(),
         1,                                       // ambient=1（永不聚合）
         0                                        // edge=0
