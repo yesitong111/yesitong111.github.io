@@ -266,6 +266,11 @@
           // 白粒子（黑底上）：亮部×纹理；均匀浅底(背景)纹理≈0被剔除
           if (tex < 0.10) continue;
           w = (gray / 255) * (0.25 + 0.75 * tex);
+        } else if (layer.mode === 'lightCat') {
+          // 白粒子（黑底上，深色主体）：靠毛发纹理负像，淡化对亮度的依赖
+          if (tex < 0.05) continue;
+          var lw = (gray / 255) * 0.55 + 0.45;
+          w = lw * (0.2 + 0.8 * tex);
         } else if (layer.mode === 'lightFlat') {
           // 白粒子（蒙版白区，版画亮部整块）
           if (gray <= 128) continue;
