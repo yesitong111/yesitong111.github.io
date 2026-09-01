@@ -77,26 +77,26 @@
     'void main(){',
     // 全身取景下的 NDC 位置
     '  vec2 posNDC = vec2((aPos.x - 0.5) * 2.0 * uKX + uOff.x, (0.5 - aPos.y) * 2.0 * uKY + uOff.y);',
-    // 电影镜头：uCam=0 脸部特写(放大uZoom倍、脸落在uFaceScreen右侧) → uCam=1 全身(居中)
+    // 猫脸在世界 NDC 中的位置（变焦固定焦点）
     '  vec2 fNdc = vec2((uFaceUV.x - 0.5) * 2.0 * uKX + uOff.x, (0.5 - uFaceUV.y) * 2.0 * uKY + uOff.y);',
-    '  vec2 closeUp = uFaceScreen + (posNDC - fNdc) * uZoom;',
+    // 电影镜头（纯变焦拉远，非滑入）：以猫脸世界位置 fNdc 为固定焦点缩放。
+    // uZoom 大(长焦/视野窄)时只见焦点附近局部(猫脸中央)，身体轮廓在画框之外(被 gl_Position 裁切)；
+    // uZoom→1(广角/视野宽)时全貌纳入、猫居中。焦距缩小全程焦点不动、物体只缩放，无横向滑动。
+    '  vec2 closeUp = fNdc + (posNDC - fNdc) * uZoom;',
     '  vec2 base = mix(closeUp, posNDC, uCam);',
     // 左右裁剪（vangogh 章节用；电影模式全开 = -2..2，无任何硬分界线）
     '  float clip = step(uClipL, base.x) * step(base.x, uClipR);',
     // 尘埃/散落锚点：全屏随机
     '  vec2 anchor = vec2(hash(vec2(aSeed, 1.7)) * 2.0 - 1.0, hash(vec2(aSeed, 3.1)) * 2.0 - 1.0);',
-    // 电影镜头叙事：猫本就存在于世界中，开场镜头太近(猫在画面之外)，随滚轮视野缩小/平移，猫从画面外进入。
-    // 故主体粒子恒位于猫形 base（位置只由镜头 uZoom/uCam/uFaceScreen 决定），不从随机点飞入拼凑；
-    // uFocus 仅作“显形”进度：控制淡入透明度与微动幅度（轮廓粒子略早淡入）。
-    '  float reveal = uFocus * (1.0 - aAmbient);',
-    '  float edgeReveal = smoothstep(0.02, 0.16, uFocus) * aEdge;',
-    '  reveal = max(reveal, edgeReveal);',
+    // 电影镜头叙事（纯变焦拉远，非滑入）：猫本就存在于世界中，开场焦距大(视野窄、只看得见焦点附近)，
+    // 猫的其余部分在画框之外；随滚轮焦距缩小(uZoom 大→1)、视野扩大，原先画外的猫被纳入画面（缩放出现，非平移）。
+    // 主体粒子恒位于猫形 base（= 焦点 + 相对位移×uZoom），画外部分由 gl_Position 裁切自然不可见。
     // 尘埃：噪声流场驱动，全屏无序漂浮（非单向），速度各异
     '  float spd = 0.05 + aSeed * 0.14;',
     '  vec2 f1 = vec2(vnoise(anchor * 2.2 + vec2(uTime * spd, 0.0)), vnoise(anchor * 2.2 + vec2(0.0, uTime * spd)));',
     '  vec2 wander = (f1 - 0.5) * 1.6;',
     '  vec2 freePos = anchor + wander;',
-    // 尘埃走自由漂浮位；主体恒走猫形位（镜头决定其在画面中的位置/大小），不飞入
+    // 尘埃走自由漂浮位；主体恒走猫形位（镜头变焦决定其在画面中的位置/大小），不飞入不横滑
     '  vec2 pos = mix(base, freePos, aAmbient);',
     // 章节散射（vangogh模式滚动散开，绕原位）
     '  float r = hash(aPos * vec2(143.7, 211.3) + aSeed);',
@@ -104,8 +104,8 @@
     '  float rad = 0.6 + 1.8 * hash(aPos * vec2(97.3, 51.1) + aSeed);',
     '  vec2 scattered = pos + vec2(cos(ang), sin(ang)) * rad * (1.0 - aAmbient);',
     '  pos = mix(pos, scattered, uProgress);',
-    // 微运动：尘埃持续无序漂浮(幅度大)；主体小范围缓慢漂移(活着、不抽搐、不静止)，随显形增强
-    '  float mAmp = aAmbient * 0.10 + (1.0 - aAmbient) * 0.012 * reveal;',
+    // 微运动：尘埃持续无序漂浮(幅度大)；主体小范围缓慢漂移(活着、不抽搐、不静止)
+    '  float mAmp = aAmbient * 0.10 + (1.0 - aAmbient) * 0.010;',
     '  vec2 mN = vec2(vnoise(aPos * 5.0 + vec2(uTime * 0.12, aSeed * 9.0)),',
     '                 vnoise(aPos * 5.0 + vec2(aSeed * 5.0, uTime * 0.14)));',
     '  pos += (mN - 0.5) * 2.0 * mAmp;',
@@ -118,22 +118,24 @@
     '  vec2 par = uView * (0.25 + aSeed * 0.75);',
     '  vec2 finalPos = pos + push + par;',
     '  vGlint = 0.0;',
-    // 粒子大小：尘埃大号常驻（开场偏大、大小不一）；主体显形后整体变小，轮廓粒子保持较大(特写清晰)
-    '  float formScale = mix(1.0, mix(0.62, 0.92, aEdge), reveal);',
-    '  float baseSize = aSize * (aAmbient * 1.4 + (1.0 - aAmbient) * formScale);',
+    // 粒子大小：尘埃大号常驻(开场偏大、大小不一)；主体随变焦近大远小(温和、封顶，长焦时稀疏中粒似尘埃，拉远后归位)，
+    // uCam=1(全身/非电影模式)时不做变焦缩放；轮廓粒子略大(特写清晰)
+    '  float psZoom = mix(1.0, clamp(0.75 + 0.35 * uZoom, 0.75, 2.2), 1.0 - uCam);',
+    '  float subjScale = mix(0.70, 0.92, aEdge) * psZoom;',
+    '  float baseSize = aSize * (aAmbient * 1.4 + (1.0 - aAmbient) * subjScale);',
     // 少数粒子低频变大（大颗粒数量少、频率低）；慢(0.18rad/s)无闪烁
     '  float bigGate = step(0.95, hash(vec2(aSeed, 3.3)));',
-    '  float big = bigGate * (0.6 + 1.8 * (0.5 + 0.5 * sin(uTime * 0.18 + aSeed * 40.0))) * (aAmbient * 1.2 + reveal);',
+    '  float big = bigGate * (0.6 + 1.8 * (0.5 + 0.5 * sin(uTime * 0.18 + aSeed * 40.0))) * (aAmbient * 1.2 + (1.0 - aAmbient) * psZoom * 0.5);',
     '  float size = baseSize + big;',
     // 轮廓粒子沿剪影边缘小范围平滑流动：居中缓慢噪声漂移(不抽搐、不单向)，有流动感
     '  vec2 eN = vec2(vnoise(aPos * 2.5 + vec2(uTime * 0.06, aSeed * 7.0)),',
     '                 vnoise(aPos * 2.5 + vec2(aSeed * 7.0, uTime * 0.06)));',
-    '  vec2 eFlow = (eN - 0.5) * 2.0 * 0.022 * aEdge * reveal;',
+    '  vec2 eFlow = (eN - 0.5) * 2.0 * 0.022 * aEdge;',
     '  finalPos += eFlow;',
     '  gl_Position = vec4(finalPos, 0.0, 1.0);',
     '  gl_PointSize = size * uPointSize * clip;',
-    // 透明度：尘埃常显；主体随显形淡入（猫是随镜头进入画面，而非粒子飞入拼凑）
-    '  vAlpha = aAlpha * uAlphaScale * clip * mix(1.0, reveal, 1.0 - aAmbient);',
+    // 透明度：主体常显（画外部分由 gl_Position 自然裁切，故猫是随视野扩大“纳入画面”而非淡入/飞入）
+    '  vAlpha = aAlpha * uAlphaScale * clip;',
     '}'
   ].join('\n');
 
@@ -566,21 +568,19 @@
     var p = progress;
     var w1, w2, scatter1, scatter2, focus, contrast, edge;
     if (CINEMATIC) {
-      // 电影叙事（摄像机拉远）：开场镜头极近、猫在画面右侧之外；随滚轮视野扩大/平移，
-      // 猫从画面之外滑入（脸部特写在右）→ 继续拉远，猫移到中央展示全身。猫恒在猫形位，不飞入拼凑。
+      // 电影叙事（纯变焦拉远，非滑入）：镜头以猫脸为固定焦点，焦距 uZoom 由大(长焦/视野窄)→1(广角/视野宽)。
+      // 开场视野极窄、只见焦点附近(放大的局部粒子，似尘埃)，猫的身体轮廓在画框之外；
+      // 随焦距缩小、视野扩大，原先在画外的猫被“纳入画面”——全程焦点不动、猫只缩放不横向滑动。
       w1 = 1; w2 = 0;
       scatter1 = 0; scatter2 = 0;
-      var t = smoothstep(0.03, 0.97, p);
-      var slide = smoothstep(0.0, 0.45, t);               // 阶段A：猫从右外滑入到右侧特写
-      var cam = smoothstep(0.50, 0.95, t);                // 阶段B：特写 → 拉远居中全身
-      camState.cam = cam;
-      camState.zoom = 2.1 + 0.6 * (1 - slide);            // 镜头倍数 2.7(极近) → 2.1(特写)
-      var fx = 2.9 + (0.60 - 2.9) * slide;                // 脸部落点：画面右外(2.9) → 右侧特写位(0.60)
-      camState.faceScreen = [fx, 0.05];
-      focus = slide;                                       // 猫随镜头进入画面而淡入显形（非粒子飞入）
+      var t = smoothstep(0.05, 0.98, p);
+      camState.cam = 0;                                     // 全程走变焦公式（焦点+相对位移×uZoom）
+      var z0 = CFG.zoomStart != null ? CFG.zoomStart : 8.0; // 开场长焦倍数（越小越早看到全貌）
+      camState.zoom = 1.0 + (z0 - 1.0) * (1.0 - t);         // 焦距 z0 → 1（拉远、视野扩大）
+      focus = 1;                                            // 主体常显（画外部分由 gl_Position 裁切自然不可见）
       contrast = smoothstep(0.02, 0.40, p);              // 背景渐变渐显
-      // 渐变过渡带：一开始偏右，随滚动移到画面中间
-      edge = (CFG.edgeStart != null ? CFG.edgeStart : 0.55) * (1 - cam) + EDGE_NDC * cam;
+      // 渐变过渡带：一开始偏右，随拉远移到画面中间
+      edge = (CFG.edgeStart != null ? CFG.edgeStart : 0.55) * (1.0 - t) + EDGE_NDC * t;
     } else if (SINGLE) {
       w1 = 1; w2 = 0;
       scatter1 = smoothstep(0.55, 0.95, p);
