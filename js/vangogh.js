@@ -42,6 +42,7 @@
     'attribute float aAlpha;',
     'attribute float aSeed;',
     'attribute float aAmbient;', // 1=环境尘埃：永不聚合，始终自由漂浮
+    'attribute float aEdge;',    // 1=剪影轮廓粒子：沿边缘小范围流动（不静止）
     'uniform float uTime;',
     'uniform float uProgress;',  // 本章聚散进度 0聚合 1散开（vangogh模式）
     'uniform float uFocus;',     // 0=全屏自由散落 1=聚合主体（电影模式，原网页图1→4）
@@ -115,10 +116,19 @@
     // 相机视差：鼠标移动=摄影机偏移，近处粒子位移大（原网页交互方式）
     '  vec2 par = uView * (0.25 + aSeed * 0.75);',
     '  vec2 finalPos = pos + push + par;',
-    // 粒子大小：尘埃有快有慢有大有小（锚点大点常驻）；主体汇聚时新粒子短暂脉冲突显、成型后细小
+    // 粒子大小：尘埃大号常驻（开场偏大、大小不一）；主体汇聚时新粒子短暂脉冲突显、成型后整体变小
     '  float pulse = local * (1.0 - local) * 1.6;',
     '  vGlint = pulse * (1.0 - aAmbient);',
-    '  float size = aSize * (1.0 - 0.4 * local * (1.0 - aAmbient)) + vGlint * 1.2;',
+    '  float formed = local * (1.0 - aAmbient);',
+    '  float baseSize = aSize * (1.0 - 0.45 * formed);',
+    // 少数粒子低频变大（大颗粒数量少、出现频率低，成型后依然偶现）
+    '  float bigGate = step(0.965, hash(vec2(aSeed, 3.3)));',
+    '  float big = bigGate * (0.8 + 1.6 * (0.5 + 0.5 * sin(uTime * 0.25 + aSeed * 40.0))) * (aAmbient * 0.4 + formed);',
+    '  float size = baseSize + big + vGlint * 1.2;',
+    // 轮廓粒子沿剪影边缘小范围流动（活着，不完全静止）
+    '  vec2 eFlow = vec2(vnoise(aPos * 3.0 + vec2(uTime * 0.10, aSeed * 7.0)),',
+    '                   vnoise(aPos * 3.0 + vec2(aSeed * 7.0, uTime * 0.10))) * 0.030 * aEdge * local;',
+    '  finalPos += eFlow;',
     '  gl_Position = vec4(finalPos, 0.0, 1.0);',
     '  gl_PointSize = size * uPointSize * clip;',
     '  vAlpha = aAlpha * uAlphaScale * clip;',
@@ -180,7 +190,8 @@
     aSize: gl.getAttribLocation(prog, 'aSize'),
     aAlpha: gl.getAttribLocation(prog, 'aAlpha'),
     aSeed: gl.getAttribLocation(prog, 'aSeed'),
-    aAmbient: gl.getAttribLocation(prog, 'aAmbient')
+    aAmbient: gl.getAttribLocation(prog, 'aAmbient'),
+    aEdge: gl.getAttribLocation(prog, 'aEdge')
   };
   var U = {};
   ['uTime', 'uProgress', 'uFocus', 'uSweep', 'uCam', 'uZoom', 'uFaceUV', 'uFaceScreen',
@@ -299,8 +310,10 @@
     var data = sctx.getImageData(0, 0, sw, sh).data;
 
     var luma = new Float32Array(sw * sh);
+    var alpha = new Float32Array(sw * sh);   // 剪影：1=不透明(猫身) 0=透明(抠图背景)
     var p, i;
     for (i = 0, p = 0; i < data.length; i += 4, p++) {
+      alpha[p] = data[i + 3] < 128 ? 0 : 1;
       // 透明像素视为白色背景（避免 ghost 身体掩膜/暗部采样把抠图区域算进去）
       luma[p] = data[i + 3] < 128 ? 255 : 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
     }
@@ -322,7 +335,18 @@
     }
     if (fw > 0) layer.face = [fxw / fw / sw, fyw / fw / sh];
 
-    var arr = []; // x, y, size, alpha, seed, ambient
+    // 剪影边缘：抠图轮廓（透明/不透明交界处），用于 ghost 沿边缘勾勒 + 轮廓粒子流动
+    var edgeMask = new Float32Array(sw * sh);
+    for (var ey = 1; ey < sh - 1; ey++) {
+      for (var ex = 1; ex < sw - 1; ex++) {
+        var ep = ey * sw + ex;
+        if (alpha[ep] < 0.5) continue;
+        var nb = alpha[ep - 1] + alpha[ep + 1] + alpha[ep - sw] + alpha[ep + sw];
+        if (nb < 3.5) edgeMask[ep] = 1;   // 四邻有透明像素 => 剪影边缘
+      }
+    }
+
+    var arr = []; // x, y, size, alpha, seed, ambient, edge
     for (var y = 0; y < sh; y++) {
       for (var x = 0; x < sw; x++) {
         p = y * sw + x;
@@ -330,14 +354,17 @@
         if (data[p * 4 + 3] < 128) continue;
         var gray = luma[p];
         var tex = Math.min(1, Math.abs(gray - base[p]) / 45);
-        var w = 0, sz, al;
+        var w = 0, sz, al, edgeFlag = 0;
         if (layer.mode === 'ghost') {
-          // 幽灵轮廓：大模糊身体掩膜 → 稀疏、大粒、低透明的模糊虚影
+          // 幽灵轮廓：大模糊身体掩膜 → 稀疏、大粒、低透明的模糊虚影；
+          // 叠加剪影边缘粒子（抠图轮廓），适度清晰地勾勒出猫的外形，且沿边缘小范围流动
           var body = Math.max(0, 1 - baseBig[p] / 200);
-          if (body < 0.15) continue;
-          w = body * 0.5;
-          sz = 2.0 + Math.random() * 2.4;
-          al = 0.05 + body * 0.10;
+          var isEdge = edgeMask[p];
+          if (body < 0.15 && !isEdge) continue;
+          edgeFlag = isEdge;
+          w = body * 0.5 + isEdge * 0.6;
+          sz = (2.0 + Math.random() * 2.4) * (1.0 - isEdge * 0.35);
+          al = 0.05 + body * 0.10 + isEdge * 0.22;
         } else if (layer.mode === 'dark') {
           // 黑粒子（白底上）：越暗越密，纹理处更实
           var darkness = (150 - gray) / 150;
@@ -371,12 +398,13 @@
           (x + 0.5) / sw, (y + 0.5) / sh,
           sz, al,
           Math.random(),
-          0                                      // ambient=0（主体粒子）
+          0,                                     // ambient=0（主体粒子）
+          edgeFlag                               // edge=1 剪影轮廓粒子（沿边缘流动）
         );
       }
     }
 
-    var n = arr.length / 6;
+    var n = arr.length / 7;
     var buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.STATIC_DRAW);
@@ -389,13 +417,20 @@
   /* ---------------- 环境尘埃层（原网页图1：全屏自由漂浮的星空/灰尘） ---------------- */
   function makeAmbient(layer) {
     var arr = [];
-    for (var i = 0; i < layer.dust; i++) {
+    while (arr.length / 7 < layer.dust) {
+      var x = Math.random();
+      // 右侧密度偏置：左半屏随机舍弃一部分，使画面右侧粒子更密集
+      if (x < 0.5 && Math.random() < 0.4) continue;
+      // 大小不一：多数中等偏大，少数明显大颗粒（开场尘埃感）
+      var sz = 1.0 + Math.random() * 2.2;
+      if (Math.random() < 0.12) sz += 2.5 + Math.random() * 3.5;
       arr.push(
-        Math.random(), Math.random(),            // 全屏随机位置
-        0.4 + Math.random() * 2.6,               // 大小不一（含少数大点）
-        0.22 + Math.random() * 0.5,
+        x, Math.random(),                        // 全屏随机位置（右侧偏密）
+        sz,                                      // 大小不一（含少数大颗粒）
+        0.30 + Math.random() * 0.45,             // alpha 偏高、更可见
         Math.random(),
-        1                                        // ambient=1（永不聚合）
+        1,                                       // ambient=1（永不聚合）
+        0                                        // edge=0
       );
     }
     var buf = gl.createBuffer();
@@ -487,15 +522,17 @@
     if (!layer.buffer || layer.count === 0 || alphaScale <= 0.01) return;
     gl.bindBuffer(gl.ARRAY_BUFFER, layer.buffer);
     gl.enableVertexAttribArray(LOC.aPos);
-    gl.vertexAttribPointer(LOC.aPos, 2, gl.FLOAT, false, 24, 0);
+    gl.vertexAttribPointer(LOC.aPos, 2, gl.FLOAT, false, 28, 0);
     gl.enableVertexAttribArray(LOC.aSize);
-    gl.vertexAttribPointer(LOC.aSize, 1, gl.FLOAT, false, 24, 8);
+    gl.vertexAttribPointer(LOC.aSize, 1, gl.FLOAT, false, 28, 8);
     gl.enableVertexAttribArray(LOC.aAlpha);
-    gl.vertexAttribPointer(LOC.aAlpha, 1, gl.FLOAT, false, 24, 12);
+    gl.vertexAttribPointer(LOC.aAlpha, 1, gl.FLOAT, false, 28, 12);
     gl.enableVertexAttribArray(LOC.aSeed);
-    gl.vertexAttribPointer(LOC.aSeed, 1, gl.FLOAT, false, 24, 16);
+    gl.vertexAttribPointer(LOC.aSeed, 1, gl.FLOAT, false, 28, 16);
     gl.enableVertexAttribArray(LOC.aAmbient);
-    gl.vertexAttribPointer(LOC.aAmbient, 1, gl.FLOAT, false, 24, 20);
+    gl.vertexAttribPointer(LOC.aAmbient, 1, gl.FLOAT, false, 28, 20);
+    gl.enableVertexAttribArray(LOC.aEdge);
+    gl.vertexAttribPointer(LOC.aEdge, 1, gl.FLOAT, false, 28, 24);
 
     gl.uniform1f(U.uProgress, scatter);
     gl.uniform1f(U.uAlphaScale, alphaScale);
