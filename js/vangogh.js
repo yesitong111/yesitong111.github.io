@@ -72,7 +72,7 @@
     '    r += 0.02 * sin(uTime * 0.6 + aSeed * 20.0);',
     '    vec2 cpos = vec2(cos(ang) * r / uAspect, sin(ang) * r) + vec2(0.0, -0.04);',
     // 布朗扰动：5% 粒子每帧随机偏移（用高频噪声近似）
-    '    vec2 br = vec2(hash2(vec2(aSeed*7.0, floor(uTime*8.0)))),',
+    '    vec2 br = vec2(hash2(vec2(aSeed*7.0, floor(uTime*8.0))),',
     '                 hash2(vec2(aSeed*13.0, floor(uTime*8.0)))) - 0.5;',
     '    base = cpos + br * 0.012;',
     '    drift = vec2(0.0);',
@@ -134,6 +134,7 @@
     'uniform float uIntro;',       // 1=开场黑洞, 0=渐变
     'uniform float uTime;',
     'uniform float uBurst;',       // 爆发：流光加速扫过
+    'uniform float uAspect;',      // 屏幕宽高比（圆形修正）
     // 噪声（极光卷曲/涟漪）
     'float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }',
     'float noise(vec2 p){',
@@ -199,6 +200,9 @@
     var s = gl.createShader(type);
     gl.shaderSource(s, src);
     gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      console.error('Shader compile error:', gl.getShaderInfoLog(s));
+    }
     return s;
   }
   function makeProgram(vs, fs) {
@@ -206,6 +210,9 @@
     gl.attachShader(p, compile(gl.VERTEX_SHADER, vs));
     gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));
     gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+      console.error('Program link error:', gl.getProgramInfoLog(p));
+    }
     return p;
   }
 
