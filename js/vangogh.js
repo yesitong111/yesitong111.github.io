@@ -56,7 +56,9 @@
     'uniform float uClipR;',
     'uniform vec2 uMouse;',
     'uniform vec2 uView;',       // 相机视差（鼠标移动=摄影机偏移，原网页交互）
+    'uniform float uSweep;',     // 0→1.3 聚合前沿，从左向右扫过（人像从左侧显现）
     'varying float vAlpha;',
+    'varying float vGlint;',     // 扫过前端粒子短暂放大（新区域突显）
     'float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }',
     'float vnoise(vec2 p){',
     '  vec2 i = floor(p); vec2 f = fract(p);',
@@ -69,21 +71,30 @@
     '}',
     'void main(){',
     '  vec2 base = vec2((aPos.x - 0.5) * 2.0 * uKX + uOff.x, (0.5 - aPos.y) * 2.0 * uKY + uOff.y);',
-    // 左右裁剪
+    // 左右裁剪（vangogh 章节用；电影模式全开 = -2..2，无任何硬分界线）
     '  float clip = step(uClipL, base.x) * step(base.x, uClipR);',
-    // 自由散落位置：全屏随机（电影模式起始态，如原网页图1的星空/灰尘）
+    // 自由散落位置：全屏随机（电影模式起始态，如原网页的星空/灰尘）
     '  vec2 free = vec2(hash(vec2(aSeed, 1.7)) * 2.0 - 1.0, hash(vec2(aSeed, 3.1)) * 2.0 - 1.0);',
-    // 错峰聚合：按 seed 陆续归位（滚动时尘埃渐次聚焦出主体）
-    '  float local = smoothstep(aSeed * 0.75, aSeed * 0.75 + 0.25, uFocus) * (1.0 - aAmbient);',
-    '  vec2 pos = mix(free, base, local);',
+    // 人像从左侧显现：聚合前沿 uSweep 从左向右扫过，按 base.x 陆续归位
+    '  float local = smoothstep(base.x - 0.32, base.x + 0.10, uSweep) * (1.0 - aAmbient);',
+    // 主体粒子"从右向左"汇聚：散落点在原位右侧 + 轻微右漂，聚合时流向左（历史向真相汇聚）
+    '  float fl = (0.35 + hash(vec2(aSeed, 7.7)) * 0.7) * (1.0 - local) * (1.0 - aAmbient);',
+    '  vec2 drift = vec2(fl, sin(uTime * 0.4 + aSeed * 40.0) * 0.05 * (1.0 - local));',
+    '  vec2 pos = mix(free + vec2(0.55, 0.0), base, local) + drift * 0.6;',
     // 章节散射（vangogh模式滚动散开，绕原位）
     '  float r = hash(aPos * vec2(143.7, 211.3) + aSeed);',
     '  float ang = r * 6.2831853;',
     '  float rad = 0.6 + 1.8 * hash(aPos * vec2(97.3, 51.1) + aSeed);',
     '  vec2 scattered = pos + vec2(cos(ang), sin(ang)) * rad * (1.0 - aAmbient);',
     '  pos = mix(pos, scattered, uProgress);',
-    // 呼吸/漂浮：散落时漂移大、聚合后微动；尘埃始终自由漂浮
-    '  float amp = mix(0.085, 0.012, local) * (1.0 + aAmbient * 0.9);',
+    // 环境尘埃：持续从右向左流动，飘出左边从右边循环回来（交界尘埃单向流动）
+    '  vec2 dust = vec2(fract(aSeed - uTime * (0.018 + aSeed * 0.02)) * 3.2 - 1.6,',
+    '                  free.y + sin(uTime * 0.5 + aSeed * 60.0) * 0.06);',
+    '  pos = mix(pos, dust, aAmbient);',
+    // 呼吸/振动：散落时漂移大；聚合后~15%粒子高频抖动(±0.25px,12Hz)，其余极微
+    '  float vib = step(0.85, hash(vec2(aSeed, 9.2))) ;',
+    '  vec2 hp = vec2(sin(uTime * 75.0 + aSeed * 200.0), cos(uTime * 75.0 + aSeed * 170.0)) * 0.006 * vib * local;',
+    '  float amp = mix(0.07, 0.008, local) * (1.0 - aAmbient) + aAmbient * 0.05;',
     '  vec2 np = aPos * 4.0 + vec2(uTime * 0.12, uTime * 0.16) + aSeed * 17.0;',
     '  vec2 breathe = vec2(vnoise(np) - 0.5, vnoise(np + vec2(11.3, 5.7)) - 0.5) * 2.0 * amp;',
     // 鼠标斥力（vangogh模式；电影模式强度为0）
@@ -93,9 +104,13 @@
     '  vec2 push = (delta / len) * (fo * fo * uMouseStrength);',
     // 相机视差：鼠标移动=摄影机偏移，近处粒子位移大（原网页交互方式）
     '  vec2 par = uView * (0.25 + aSeed * 0.75);',
-    '  vec2 finalPos = pos + breathe + push + par;',
+    '  vec2 finalPos = pos + breathe + hp + push + par;',
+    // 扫过前端的新区域粒子短暂放大突显；成型后主体粒子整体变小（细节填充）
+    '  float edge = local * (1.0 - smoothstep(0.0, 0.18, uSweep - base.x)) * step(base.x, uSweep);',
+    '  vGlint = edge * (1.0 - aAmbient);',
+    '  float size = aSize * (1.0 - 0.45 * local * (1.0 - aAmbient)) + vGlint * 1.4;',
     '  gl_Position = vec4(finalPos, 0.0, 1.0);',
-    '  gl_PointSize = aSize * uPointSize * clip;',
+    '  gl_PointSize = size * uPointSize * clip;',
     '  vAlpha = aAlpha * uAlphaScale * clip;',
     '}'
   ].join('\n');
@@ -104,11 +119,12 @@
     'precision mediump float;',
     'uniform vec3 uColor;',
     'varying float vAlpha;',
+    'varying float vGlint;',
     'void main(){',
     // 软粒子：羽化边缘，接近炭笔素描质感
     '  vec2 c = gl_PointCoord - vec2(0.5);',
     '  float d = length(c);',
-    '  float a = smoothstep(0.5, 0.15, d) * vAlpha;',
+    '  float a = smoothstep(0.5, 0.15, d) * min(1.0, vAlpha + vGlint * 0.35);',
     '  if (a < 0.01) discard;',
     '  gl_FragColor = vec4(uColor, a);',
     '}'
@@ -157,7 +173,7 @@
     aAmbient: gl.getAttribLocation(prog, 'aAmbient')
   };
   var U = {};
-  ['uTime', 'uProgress', 'uFocus', 'uKX', 'uKY', 'uOff', 'uPointSize', 'uMouseRadius',
+  ['uTime', 'uProgress', 'uFocus', 'uSweep', 'uKX', 'uKY', 'uOff', 'uPointSize', 'uMouseRadius',
    'uMouseStrength', 'uAlphaScale', 'uClipL', 'uClipR', 'uMouse', 'uView', 'uColor'].forEach(function (n) {
     U[n] = gl.getUniformLocation(prog, n);
   });
@@ -188,7 +204,7 @@
   var SINGLE = !!CFG.single;                 // 单章节页面（猫）
   var CINEMATIC = !!CFG.cinematic;           // 电影模式（原网页图1→4：尘埃→聚合）
   var EDGE_NDC = CFG.edge != null ? CFG.edge : 0.24; // 渐变中心 NDC x
-  var BG_SOFT = CINEMATIC ? 0.85 : 0.22;     // 电影模式：超宽柔和渐变，无分界线感
+  var BG_SOFT = CFG.soft != null ? CFG.soft : (CINEMATIC ? 0.85 : 0.22); // 渐变柔和度（越大越无分界线）
 
   /* 图层顺序即绘制顺序。fit: contain 等比完整。
      分界屏常驻左白右黑（分界线 NDC 0.24），人物骑分界线：
@@ -203,12 +219,22 @@
     { url: '/img/rdr2/mask_red.png',   mode: 'white',     fit: 'contain', ox: 0.24, oy: 0, clipL: -2, clipR: 2, color: [0.78, 0.10, 0.10], chapter: 2 }
   ];
 
-  /* ---------------- 等比映射系数（不拉伸） ---------------- */
-  function fitK(ia, va, fit) {
+  /* ---------------- 等比映射系数（不拉伸） ----------------
+     NDC 下 x 与 y 量纲不同：屏幕宽高比 va=W/H。
+     uv→NDC 后 x 方向跨度是 y 的 va 倍，故 contain 时需按 va 归一化，
+     否则横/竖图都会被压变形。zoom>1 放大主体。 */
+  function fitK(ia, va, fit, zoom) {
+    zoom = zoom || 1;
+    // 约束 kx/ky = ia/va（保证等比不变形）；contain 完整放入、cover 铺满裁剪
+    var kx, ky;
     if (fit === 'cover') {
-      return ia <= va ? { kx: 1, ky: 1 / ia } : { kx: ia, ky: 1 };
+      kx = Math.max(1, ia / va);
+      ky = Math.max(1, va / ia);
+    } else {
+      kx = Math.min(1, ia / va);
+      ky = Math.min(1, va / ia);
     }
-    return ia <= va ? { kx: ia, ky: 1 } : { kx: 1, ky: 1 / ia };
+    return { kx: kx * zoom, ky: ky * zoom };
   }
 
   function applyFits() {
@@ -216,7 +242,7 @@
     for (var i = 0; i < layers.length; i++) {
       var L = layers[i];
       if (!L.aspect) continue;
-      var k = fitK(L.aspect, va, L.fit);
+      var k = fitK(L.aspect, va, L.fit, L.zoom);
       L.kx = k.kx; L.ky = k.ky;
     }
     gl.useProgram(bgProg);
@@ -451,24 +477,25 @@
     mouse.strength += (mouse.target - mouse.strength) * 0.15;
 
     var p = progress;
-    var w1, w2, scatter1, scatter2, focus, contrast;
+    var w1, w2, scatter1, scatter2, sweep, contrast;
     if (CINEMATIC) {
-      // 电影模式（原网页图1→4）：尘埃→背景渐显→错峰聚合主体，标题常驻
+      // 电影模式（原网页）：尘埃→背景渐显→人像从左向右扫过聚合，标题常驻
       w1 = 1; w2 = 0;
       scatter1 = 0; scatter2 = 0;
-      focus = smoothstep(0.10, 0.62, p);
+      // 聚合前沿：从屏左外(-1.6)扫到屏右(1.4)
+      sweep = -1.6 + smoothstep(0.08, 0.72, p) * 3.0;
       contrast = smoothstep(0.02, 0.42, p);
     } else if (SINGLE) {
       w1 = 1; w2 = 0;
       scatter1 = smoothstep(0.55, 0.95, p);
       scatter2 = 0;
-      focus = 1; contrast = 1;
+      sweep = 2; contrast = 1;
     } else {
       w1 = 1 - smoothstep(0.40, 0.52, p);
       w2 = smoothstep(0.46, 0.58, p);
       scatter1 = smoothstep(0.06, 0.42, p);
       scatter2 = smoothstep(0.60, 0.95, p);
-      focus = 1; contrast = 1;
+      sweep = 2; contrast = 1;
     }
 
     // 相机视差：电影模式下鼠标移动=摄影机偏移（画面随鼠标同向轻移）
@@ -480,7 +507,8 @@
     drawBg(contrast);
 
     gl.uniform1f(U.uTime, time);
-    gl.uniform1f(U.uFocus, focus);
+    gl.uniform1f(U.uFocus, sweep < 1.99 ? 1 : 1);
+    gl.uniform1f(U.uSweep, sweep);
     gl.uniform2f(U.uMouse, mouse.x, mouse.y);
     gl.uniform2f(U.uView, view.x, view.y);
     gl.uniform1f(U.uMouseRadius, 0.16);

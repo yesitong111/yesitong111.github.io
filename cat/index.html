@@ -7,7 +7,7 @@
 <meta property="og:locale" content="zh_CN">
 <meta property="og:image" content="https://yesitong111.github.io/img/avatar.JPG">
 <meta property="article:published_time" content="2026-09-01T03:00:00.000Z">
-<meta property="article:modified_time" content="2026-09-01T05:55:21.699Z">
+<meta property="article:modified_time" content="2026-09-01T06:22:22.480Z">
 <meta property="article:author" content="我的名字">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:image" content="https://yesitong111.github.io/img/avatar.JPG"><script type="application/ld+json"></script><link rel="shortcut icon" href="/img/favicon.png"><link rel="canonical" href="https://yesitong111.github.io/cat/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css?v=5.7.0"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.3.1/css/all.min.css"><script>
@@ -201,16 +201,18 @@
 
 <link rel="stylesheet" href="/css/vangogh.css">
 <script>
-  /* 猫页配置：电影模式（同原网页图1→4）——全屏尘埃→背景渐显→聚合为猫 */
+  /* 猫页配置：电影模式（同原网页）——全屏尘埃→背景渐显→猫从左向右扫过聚合。
+     不做左右硬裁剪：黑/白粒子都画满全图，靠背景柔和渐变自然显隐（亮侧见黑粒子、暗侧见白粒子）。 */
   window.VANGOGH_CONFIG = {
     single: true,
     cinematic: true,
-    edge: 0.24,
+    edge: 0.08,
+    soft: 0.5,
     layers: [
-      { dust: 650, color: [0.10, 0.10, 0.10] },  // 黑尘埃（亮侧可见）
-      { dust: 650, color: [0.95, 0.95, 0.94] },  // 白尘埃（暗侧可见）
-      { url: '/img/cat/cat.png', mode: 'dark',      fit: 'contain', ox: 0.12, oy: 0, clipL: -2,  clipR: 0.24, color: [0.06, 0.06, 0.06], chapter: 1 },
-      { url: '/img/cat/cat.png', mode: 'lightCat',  fit: 'contain', ox: 0.12, oy: 0, clipL: 0.24, clipR: 2,    color: [0.94, 0.94, 0.93], chapter: 1 }
+      { dust: 700, color: [0.10, 0.10, 0.10] },  // 黑尘埃（亮侧可见）
+      { dust: 700, color: [0.95, 0.95, 0.94] },  // 白尘埃（暗侧可见）
+      { url: '/img/cat/cat.png', mode: 'dark',     fit: 'contain', zoom: 1.12, ox: 0.04, oy: 0, clipL: -2, clipR: 2, color: [0.05, 0.05, 0.05], chapter: 1 },
+      { url: '/img/cat/cat.png', mode: 'lightCat', fit: 'contain', zoom: 1.12, ox: 0.04, oy: 0, clipL: -2, clipR: 2, color: [0.95, 0.95, 0.94], chapter: 1 }
     ]
   };
 </script>
