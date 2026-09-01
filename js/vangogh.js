@@ -164,13 +164,18 @@
   var mouse = { x: 0, y: 0, strength: 0, target: 0 };
   var progress = 0, targetProgress = 0;
   var time = 0;
-  var EDGE_NDC = 0.24; // 分界线 NDC x（人物中心）
+
+  /* 页面配置：/vangogh/ 用默认（双章节），/cat/ 通过 window.VANGOGH_CONFIG 覆盖 */
+  var CFG = window.VANGOGH_CONFIG || {};
+  var SINGLE = !!CFG.single;                 // 单章节页面（猫）
+  var EDGE_NDC = CFG.edge != null ? CFG.edge : 0.24; // 分界线 NDC x（人物中心）
 
   /* 图层顺序即绘制顺序。fit: contain 等比完整。
      分界屏常驻左白右黑（分界线 NDC 0.24），人物骑分界线：
      章节01：肖像 黑粒子层(左半,暗部) + 白粒子层(右半,亮部×纹理)
-     章节02：RDR2 黑粒子层(左半) + 白粒子层(右半) + 红粒子层(骑全线) */
-  var layers = [
+     章节02：RDR2 黑粒子层(左半) + 白粒子层(右半) + 红粒子层(骑全线)
+     透明底PNG：alpha<128 的像素不生成粒子（抠图干净） */
+  var layers = CFG.layers || [
     { url: '/img/vangogh/young-vincent.png', mode: 'dark',  fit: 'contain', ox: 0.24, oy: -0.08, clipL: -2, clipR: 0.24, color: [0.08, 0.08, 0.08], chapter: 1 },
     { url: '/img/vangogh/young-vincent.png', mode: 'light', fit: 'contain', ox: 0.24, oy: -0.08, clipL: 0.24, clipR: 2, color: [0.93, 0.93, 0.92], chapter: 1 },
     { url: '/img/rdr2/mask_black.png', mode: 'lightFlat', fit: 'contain', ox: 0.24, oy: 0, clipL: -2, clipR: 0.24, color: [0.07, 0.06, 0.05], chapter: 2 },
@@ -247,6 +252,8 @@
     for (var y = 0; y < sh; y++) {
       for (var x = 0; x < sw; x++) {
         p = y * sw + x;
+        // 透明底PNG：alpha<128 不生成粒子（抠图区域干净）
+        if (data[p * 4 + 3] < 128) continue;
         var gray = luma[p];
         var tex = Math.min(1, Math.abs(gray - base[p]) / 45);
         var w = 0;
@@ -391,10 +398,18 @@
     mouse.strength += (mouse.target - mouse.strength) * 0.15;
 
     var p = progress;
-    var w1 = 1 - smoothstep(0.40, 0.52, p);
-    var w2 = smoothstep(0.46, 0.58, p);
-    var scatter1 = smoothstep(0.06, 0.42, p);
-    var scatter2 = smoothstep(0.60, 0.95, p);
+    var w1, w2, scatter1, scatter2;
+    if (SINGLE) {
+      // 单章节页面（猫）：标题常驻，滚动后段散开
+      w1 = 1; w2 = 0;
+      scatter1 = smoothstep(0.55, 0.95, p);
+      scatter2 = 0;
+    } else {
+      w1 = 1 - smoothstep(0.40, 0.52, p);
+      w2 = smoothstep(0.46, 0.58, p);
+      scatter1 = smoothstep(0.06, 0.42, p);
+      scatter2 = smoothstep(0.60, 0.95, p);
+    }
 
     drawBg();
 
@@ -438,6 +453,7 @@
   }
 
   function updateDom(p, w2) {
+    if (SINGLE) return; // 单章节页面（猫）：标题常驻，无章节切换
     if (titleEl) titleEl.classList.toggle('is-hidden', p > 0.05);
     if (wordEl) wordEl.classList.toggle('is-hidden', w2 > 0.5);
     if (chapterEl) chapterEl.textContent = w2 > 0.5 ? 'CHAPTER 02/' : 'CHAPTER 01/';
