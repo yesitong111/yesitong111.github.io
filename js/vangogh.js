@@ -57,6 +57,10 @@
     'uniform vec2 uMouse;',
     'uniform vec2 uView;',       // 相机视差（鼠标移动=摄影机偏移，原网页交互）
     'uniform float uSweep;',     // 0→1.3 聚合前沿，从左向右扫过（人像从左侧显现）
+    'uniform float uCam;',       // 电影取景：0=脸部特写(右) → 1=全身(居中)
+    'uniform float uZoom;',      // 特写放大倍数
+    'uniform vec2 uFaceUV;',     // 脸部在图像 uv 中的重心
+    'uniform vec2 uFaceScreen;', // 特写时脸部在屏幕 NDC 的落点
     'varying float vAlpha;',
     'varying float vGlint;',     // 扫过前端粒子短暂放大（新区域突显）
     'float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }',
@@ -70,33 +74,39 @@
     '  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);',
     '}',
     'void main(){',
-    '  vec2 base = vec2((aPos.x - 0.5) * 2.0 * uKX + uOff.x, (0.5 - aPos.y) * 2.0 * uKY + uOff.y);',
+    // 全身取景下的 NDC 位置
+    '  vec2 posNDC = vec2((aPos.x - 0.5) * 2.0 * uKX + uOff.x, (0.5 - aPos.y) * 2.0 * uKY + uOff.y);',
+    // 电影镜头：uCam=0 脸部特写(放大uZoom倍、脸落在uFaceScreen右侧) → uCam=1 全身(居中)
+    '  vec2 fNdc = vec2((uFaceUV.x - 0.5) * 2.0 * uKX + uOff.x, (0.5 - uFaceUV.y) * 2.0 * uKY + uOff.y);',
+    '  vec2 closeUp = uFaceScreen + (posNDC - fNdc) * uZoom;',
+    '  vec2 base = mix(closeUp, posNDC, uCam);',
     // 左右裁剪（vangogh 章节用；电影模式全开 = -2..2，无任何硬分界线）
     '  float clip = step(uClipL, base.x) * step(base.x, uClipR);',
-    // 自由散落位置：全屏随机（电影模式起始态，如原网页的星空/灰尘）
-    '  vec2 free = vec2(hash(vec2(aSeed, 1.7)) * 2.0 - 1.0, hash(vec2(aSeed, 3.1)) * 2.0 - 1.0);',
-    // 人像从左侧显现：聚合前沿 uSweep 从左向右扫过，按 base.x 陆续归位
-    '  float local = smoothstep(base.x - 0.32, base.x + 0.10, uSweep) * (1.0 - aAmbient);',
-    // 主体粒子"从右向左"汇聚：散落点在原位右侧 + 轻微右漂，聚合时流向左（历史向真相汇聚）
-    '  float fl = (0.35 + hash(vec2(aSeed, 7.7)) * 0.7) * (1.0 - local) * (1.0 - aAmbient);',
-    '  vec2 drift = vec2(fl, sin(uTime * 0.4 + aSeed * 40.0) * 0.05 * (1.0 - local));',
-    '  vec2 pos = mix(free + vec2(0.55, 0.0), base, local) + drift * 0.6;',
+    // 尘埃/散落锚点：全屏随机
+    '  vec2 anchor = vec2(hash(vec2(aSeed, 1.7)) * 2.0 - 1.0, hash(vec2(aSeed, 3.1)) * 2.0 - 1.0);',
+    // 主体粒子错峰汇聚（uFocus 0→1，按 seed 陆续归位）
+    '  float local = smoothstep(aSeed * 0.7, aSeed * 0.7 + 0.3, uFocus) * (1.0 - aAmbient);',
+    // 汇聚前的自由散落：噪声流场驱动，无序漂浮（非单向），速度各异
+    '  float spd = 0.05 + aSeed * 0.14;',
+    '  vec2 f1 = vec2(vnoise(anchor * 2.2 + vec2(uTime * spd, 0.0)), vnoise(anchor * 2.2 + vec2(0.0, uTime * spd)));',
+    '  vec2 wander = (f1 - 0.5) * 1.6;',
+    '  vec2 freePos = anchor + wander;',
+    '  vec2 pos = mix(freePos, base, local);',
     // 章节散射（vangogh模式滚动散开，绕原位）
     '  float r = hash(aPos * vec2(143.7, 211.3) + aSeed);',
     '  float ang = r * 6.2831853;',
     '  float rad = 0.6 + 1.8 * hash(aPos * vec2(97.3, 51.1) + aSeed);',
     '  vec2 scattered = pos + vec2(cos(ang), sin(ang)) * rad * (1.0 - aAmbient);',
     '  pos = mix(pos, scattered, uProgress);',
-    // 环境尘埃：持续从右向左流动，飘出左边从右边循环回来（交界尘埃单向流动）
-    '  vec2 dust = vec2(fract(aSeed - uTime * (0.018 + aSeed * 0.02)) * 3.2 - 1.6,',
-    '                  free.y + sin(uTime * 0.5 + aSeed * 60.0) * 0.06);',
-    '  pos = mix(pos, dust, aAmbient);',
-    // 呼吸/振动：散落时漂移大；聚合后~15%粒子高频抖动(±0.25px,12Hz)，其余极微
-    '  float vib = step(0.85, hash(vec2(aSeed, 9.2))) ;',
+    // 微运动：尘埃持续无序漂浮(幅度大)；主体成型后小范围微动(活着不静止)
+    '  float mAmp = aAmbient * 0.10 + (1.0 - aAmbient) * mix(0.06, 0.010, local);',
+    '  vec2 mN = vec2(vnoise(aPos * 5.0 + vec2(uTime * 0.15, aSeed * 9.0)),',
+    '                 vnoise(aPos * 5.0 + vec2(aSeed * 5.0, uTime * 0.18)));',
+    '  pos += (mN - 0.5) * 2.0 * mAmp;',
+    // ~15% 主体粒子 12Hz 高频微抖（光影跳跃感）
+    '  float vib = step(0.85, hash(vec2(aSeed, 9.2)));',
     '  vec2 hp = vec2(sin(uTime * 75.0 + aSeed * 200.0), cos(uTime * 75.0 + aSeed * 170.0)) * 0.006 * vib * local;',
-    '  float amp = mix(0.07, 0.008, local) * (1.0 - aAmbient) + aAmbient * 0.05;',
-    '  vec2 np = aPos * 4.0 + vec2(uTime * 0.12, uTime * 0.16) + aSeed * 17.0;',
-    '  vec2 breathe = vec2(vnoise(np) - 0.5, vnoise(np + vec2(11.3, 5.7)) - 0.5) * 2.0 * amp;',
+    '  pos += hp;',
     // 鼠标斥力（vangogh模式；电影模式强度为0）
     '  vec2 delta = pos - uMouse;',
     '  float len = max(length(delta), 0.0001);',
@@ -104,11 +114,11 @@
     '  vec2 push = (delta / len) * (fo * fo * uMouseStrength);',
     // 相机视差：鼠标移动=摄影机偏移，近处粒子位移大（原网页交互方式）
     '  vec2 par = uView * (0.25 + aSeed * 0.75);',
-    '  vec2 finalPos = pos + breathe + hp + push + par;',
-    // 扫过前端的新区域粒子短暂放大突显；成型后主体粒子整体变小（细节填充）
-    '  float edge = local * (1.0 - smoothstep(0.0, 0.18, uSweep - base.x)) * step(base.x, uSweep);',
-    '  vGlint = edge * (1.0 - aAmbient);',
-    '  float size = aSize * (1.0 - 0.45 * local * (1.0 - aAmbient)) + vGlint * 1.4;',
+    '  vec2 finalPos = pos + push + par;',
+    // 粒子大小：尘埃有快有慢有大有小（锚点大点常驻）；主体汇聚时新粒子短暂脉冲突显、成型后细小
+    '  float pulse = local * (1.0 - local) * 1.6;',
+    '  vGlint = pulse * (1.0 - aAmbient);',
+    '  float size = aSize * (1.0 - 0.4 * local * (1.0 - aAmbient)) + vGlint * 1.2;',
     '  gl_Position = vec4(finalPos, 0.0, 1.0);',
     '  gl_PointSize = size * uPointSize * clip;',
     '  vAlpha = aAlpha * uAlphaScale * clip;',
@@ -173,7 +183,8 @@
     aAmbient: gl.getAttribLocation(prog, 'aAmbient')
   };
   var U = {};
-  ['uTime', 'uProgress', 'uFocus', 'uSweep', 'uKX', 'uKY', 'uOff', 'uPointSize', 'uMouseRadius',
+  ['uTime', 'uProgress', 'uFocus', 'uSweep', 'uCam', 'uZoom', 'uFaceUV', 'uFaceScreen',
+   'uKX', 'uKY', 'uOff', 'uPointSize', 'uMouseRadius',
    'uMouseStrength', 'uAlphaScale', 'uClipL', 'uClipR', 'uMouse', 'uView', 'uColor'].forEach(function (n) {
     U[n] = gl.getUniformLocation(prog, n);
   });
@@ -290,12 +301,28 @@
     var luma = new Float32Array(sw * sh);
     var p, i;
     for (i = 0, p = 0; i < data.length; i += 4, p++) {
-      luma[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      // 透明像素视为白色背景（避免 ghost 身体掩膜/暗部采样把抠图区域算进去）
+      luma[p] = data[i + 3] < 128 ? 255 : 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
     }
     // 局部纹理 = 与模糊基线的差（五官/胡须/衣纹/版画笔触）
     var base = boxBlur(luma, sw, sh, 3);
+    // 大模糊基线：幽灵轮廓（ghost）与脸部重心用
+    var baseBig = boxBlur(luma, sw, sh, 12);
 
-    var arr = []; // x, y, size, alpha, seed
+    // 脸部重心：上半身高纹理不透明像素的加权质心（脸=细节最集中处，用于特写取景）
+    var fxw = 0, fyw = 0, fw = 0;
+    for (y = 0; y < sh; y++) {
+      for (x = 0; x < sw; x++) {
+        p = y * sw + x;
+        if (data[p * 4 + 3] < 128) continue;
+        if (y > sh * 0.62) continue; // 只看上半身
+        var t = Math.min(1, Math.abs(luma[p] - base[p]) / 40) + (1 - luma[p] / 255) * 0.4;
+        fxw += x * t; fyw += y * t; fw += t;
+      }
+    }
+    if (fw > 0) layer.face = [fxw / fw / sw, fyw / fw / sh];
+
+    var arr = []; // x, y, size, alpha, seed, ambient
     for (var y = 0; y < sh; y++) {
       for (var x = 0; x < sw; x++) {
         p = y * sw + x;
@@ -303,35 +330,46 @@
         if (data[p * 4 + 3] < 128) continue;
         var gray = luma[p];
         var tex = Math.min(1, Math.abs(gray - base[p]) / 45);
-        var w = 0;
-        if (layer.mode === 'dark') {
+        var w = 0, sz, al;
+        if (layer.mode === 'ghost') {
+          // 幽灵轮廓：大模糊身体掩膜 → 稀疏、大粒、低透明的模糊虚影
+          var body = Math.max(0, 1 - baseBig[p] / 200);
+          if (body < 0.15) continue;
+          w = body * 0.5;
+          sz = 2.0 + Math.random() * 2.4;
+          al = 0.05 + body * 0.10;
+        } else if (layer.mode === 'dark') {
           // 黑粒子（白底上）：越暗越密，纹理处更实
           var darkness = (150 - gray) / 150;
           if (darkness <= 0.02) continue;
           w = darkness * (0.45 + 0.55 * tex);
+          sz = 0.6 + w * 1.7 + Math.random() * 0.5; al = 0.4 + w * 0.6;
         } else if (layer.mode === 'light') {
           // 白粒子（黑底上）：亮部×纹理；均匀浅底(背景)纹理≈0被剔除
           if (tex < 0.10) continue;
           w = (gray / 255) * (0.25 + 0.75 * tex);
+          sz = 0.6 + w * 1.7 + Math.random() * 0.5; al = 0.4 + w * 0.6;
         } else if (layer.mode === 'lightCat') {
-          // 白粒子（黑底上，深色主体）：靠毛发纹理负像，淡化对亮度的依赖
+          // 白粒子（黑底上，深色主体）：靠毛发纹理负像，淡化对亮度的依赖（勾勒轮廓/毛发）
           if (tex < 0.05) continue;
           var lw = (gray / 255) * 0.55 + 0.45;
           w = lw * (0.2 + 0.8 * tex);
+          sz = 0.55 + w * 1.5 + Math.random() * 0.5; al = 0.45 + w * 0.55;
         } else if (layer.mode === 'lightFlat') {
           // 白粒子（蒙版白区，版画亮部整块）
           if (gray <= 128) continue;
           w = 0.9;
+          sz = 0.6 + w * 1.7 + Math.random() * 0.5; al = 0.4 + w * 0.6;
         } else {
           if (gray <= 128) continue;
           w = 1;
+          sz = 0.6 + w * 1.7 + Math.random() * 0.5; al = 0.4 + w * 0.6;
         }
         // 密度分级
         if (Math.random() > w) continue;
         arr.push(
           (x + 0.5) / sw, (y + 0.5) / sh,
-          0.6 + w * 1.7 + Math.random() * 0.5,  // 大小分级
-          0.4 + w * 0.6,                         // 透明分级
+          sz, al,
           Math.random(),
           0                                      // ambient=0（主体粒子）
         );
@@ -432,9 +470,10 @@
   }
 
   /* ---------------- 绘制 ---------------- */
-  function drawBg(contrast) {
+  function drawBg(contrast, edge) {
     gl.useProgram(bgProg);
     gl.uniform1f(BG.uContrast, contrast);
+    gl.uniform1f(BG.uEdge, edge);
     gl.disable(gl.BLEND);
     gl.bindBuffer(gl.ARRAY_BUFFER, bgBuf);
     gl.enableVertexAttribArray(BG.aPos);
@@ -465,10 +504,19 @@
     gl.uniform2f(U.uOff, layer.ox, layer.oy);
     gl.uniform1f(U.uClipL, layer.clipL);
     gl.uniform1f(U.uClipR, layer.clipR);
+    // 电影取景（脸部特写→全身）；尘埃/无脸数据层不受影响
+    var fc = layer.face || CFG.faceUV || [0.5, 0.36];
+    gl.uniform1f(U.uCam, camState.cam);
+    gl.uniform1f(U.uZoom, CFG.faceZoom || 1.9);
+    gl.uniform2f(U.uFaceUV, fc[0], fc[1]);
+    gl.uniform2f(U.uFaceScreen, camState.faceScreen[0], camState.faceScreen[1]);
     gl.uniform3f(U.uColor, layer.color[0], layer.color[1], layer.color[2]);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.drawArrays(gl.POINTS, 0, layer.count);
   }
+
+  // 电影镜头状态：cam 0=脸部特写(右) → 1=全身(居中)；faceScreen=特写时脸部落点
+  var camState = { cam: 1, faceScreen: CFG.faceScreen || [0.55, 0.08] };
 
   function frame(dt) {
     time += dt;
@@ -477,25 +525,30 @@
     mouse.strength += (mouse.target - mouse.strength) * 0.15;
 
     var p = progress;
-    var w1, w2, scatter1, scatter2, sweep, contrast;
+    var w1, w2, scatter1, scatter2, focus, contrast, edge;
     if (CINEMATIC) {
-      // 电影模式（原网页）：尘埃→背景渐显→人像从左向右扫过聚合，标题常驻
+      // 电影叙事：满屏尘埃无序漂浮 → 脸在右侧特写聚合 → 镜头收缩拉远、猫移到中央展示全身
       w1 = 1; w2 = 0;
       scatter1 = 0; scatter2 = 0;
-      // 聚合前沿：从屏左外(-1.6)扫到屏右(1.4)
-      sweep = -1.6 + smoothstep(0.08, 0.72, p) * 3.0;
-      contrast = smoothstep(0.02, 0.42, p);
+      focus = smoothstep(0.12, 0.50, p);                 // 猫粒子汇聚
+      var cam = smoothstep(0.52, 0.90, p);               // 0=特写 → 1=全身
+      camState.cam = cam;
+      contrast = smoothstep(0.02, 0.40, p);              // 背景渐变渐显
+      // 渐变过渡带：一开始偏右，随滚动移到画面中间
+      edge = (CFG.edgeStart != null ? CFG.edgeStart : 0.55) * (1 - cam) + EDGE_NDC * cam;
     } else if (SINGLE) {
       w1 = 1; w2 = 0;
       scatter1 = smoothstep(0.55, 0.95, p);
       scatter2 = 0;
-      sweep = 2; contrast = 1;
+      focus = 1; contrast = 1; edge = EDGE_NDC;
+      camState.cam = 1;
     } else {
       w1 = 1 - smoothstep(0.40, 0.52, p);
       w2 = smoothstep(0.46, 0.58, p);
       scatter1 = smoothstep(0.06, 0.42, p);
       scatter2 = smoothstep(0.60, 0.95, p);
-      sweep = 2; contrast = 1;
+      focus = 1; contrast = 1; edge = EDGE_NDC;
+      camState.cam = 1;
     }
 
     // 相机视差：电影模式下鼠标移动=摄影机偏移（画面随鼠标同向轻移）
@@ -504,11 +557,11 @@
     view.x += (vx - view.x) * 0.04;
     view.y += (vy - view.y) * 0.04;
 
-    drawBg(contrast);
+    drawBg(contrast, edge);
 
     gl.uniform1f(U.uTime, time);
-    gl.uniform1f(U.uFocus, sweep < 1.99 ? 1 : 1);
-    gl.uniform1f(U.uSweep, sweep);
+    gl.uniform1f(U.uFocus, focus);
+    gl.uniform1f(U.uSweep, 0);
     gl.uniform2f(U.uMouse, mouse.x, mouse.y);
     gl.uniform2f(U.uView, view.x, view.y);
     gl.uniform1f(U.uMouseRadius, 0.16);
