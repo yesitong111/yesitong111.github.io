@@ -1,13 +1,13 @@
-<!DOCTYPE html><html lang="zh-CN" data-theme="light"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>猫咪粒子 | 我的博客</title><meta name="author" content="我的名字"><meta name="copyright" content="我的名字"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#ffffff"><meta name="description" content="我的猫 — 黑洞开场 + 螺旋吸积粒子 + 滚动聚焦成像 + 鼠标视角平移">
+<!DOCTYPE html><html lang="zh-CN" data-theme="light"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>猫咪粒子 | 我的博客</title><meta name="author" content="我的名字"><meta name="copyright" content="我的名字"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#ffffff"><meta name="description" content="我的猫 — WebGL 点云粒子人像，左白右黑分界屏，同原网页梵高页设计">
 <meta property="og:type" content="website">
 <meta property="og:title" content="猫咪粒子">
 <meta property="og:url" content="https://yesitong111.github.io/cat/index.html">
 <meta property="og:site_name" content="我的博客">
-<meta property="og:description" content="我的猫 — 黑洞开场 + 螺旋吸积粒子 + 滚动聚焦成像 + 鼠标视角平移">
+<meta property="og:description" content="我的猫 — WebGL 点云粒子人像，左白右黑分界屏，同原网页梵高页设计">
 <meta property="og:locale" content="zh_CN">
 <meta property="og:image" content="https://yesitong111.github.io/img/avatar.JPG">
 <meta property="article:published_time" content="2026-09-01T03:00:00.000Z">
-<meta property="article:modified_time" content="2026-09-01T05:31:55.680Z">
+<meta property="article:modified_time" content="2026-09-01T05:55:21.699Z">
 <meta property="article:author" content="我的名字">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:image" content="https://yesitong111.github.io/img/avatar.JPG"><script type="application/ld+json"></script><link rel="shortcut icon" href="/img/favicon.png"><link rel="canonical" href="https://yesitong111.github.io/cat/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css?v=5.7.0"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.3.1/css/all.min.css"><script>
@@ -190,22 +190,27 @@
   <canvas id="grain-canvas" class="grain-canvas"></canvas>
 
 <p>  <span class="vg-chapter" id="vg-chapter">CHAPTER 01&#x2F;</span></p>
-  <p class="vg-intro" id="vg-intro">
-    Zaizai, my beloved cat,<br>
-    out of the darkness, a portrait comes to light...
-  </p>
+  <div class="vg-title" id="vg-title">
+    <span class="vg-eyebrow">M Y&nbsp;&nbsp;Z A I Z A I</span>
+    <h1 class="vg-heading">Zaizai by</h1>
+    <h2 class="vg-subheading">My Beloved Cat</h2>
+  </div>
 
-  <p class="vg-hint">滚动 = 粒子聚焦成像 · 移动鼠标 = 视角平移</p>
+  <p class="vg-hint">移动鼠标 = 视角移动 · 滚动 = 尘埃聚合为猫</p>
 </div>
 
 <link rel="stylesheet" href="/css/vangogh.css">
 <script>
-  /* 猫页配置：黑洞开场 + 螺旋吸积粒子 + 滚动聚焦成像 */
+  /* 猫页配置：电影模式（同原网页图1→4）——全屏尘埃→背景渐显→聚合为猫 */
   window.VANGOGH_CONFIG = {
     single: true,
+    cinematic: true,
+    edge: 0.24,
     layers: [
-      { url: '/img/cat/cat.png', mode: 'dark',     fit: 'contain', ox: 0, oy: 0, color: [0.06, 0.06, 0.06], chapter: 1, sampleW: 620 },
-      { url: '/img/cat/cat.png', mode: 'lightCat', fit: 'contain', ox: 0, oy: 0, color: [0.95, 0.95, 0.94], chapter: 1, sampleW: 620 }
+      { dust: 650, color: [0.10, 0.10, 0.10] },  // 黑尘埃（亮侧可见）
+      { dust: 650, color: [0.95, 0.95, 0.94] },  // 白尘埃（暗侧可见）
+      { url: '/img/cat/cat.png', mode: 'dark',      fit: 'contain', ox: 0.12, oy: 0, clipL: -2,  clipR: 0.24, color: [0.06, 0.06, 0.06], chapter: 1 },
+      { url: '/img/cat/cat.png', mode: 'lightCat',  fit: 'contain', ox: 0.12, oy: 0, clipL: 0.24, clipR: 2,    color: [0.94, 0.94, 0.93], chapter: 1 }
     ]
   };
 </script>

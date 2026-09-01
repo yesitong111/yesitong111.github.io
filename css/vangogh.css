@@ -91,31 +91,6 @@
 }
 
 /* 中部单词（regret / redemption 等）—— difference 随背景反色 */
-/* 开场黑洞中央文案 */
-.vg-intro {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 4;
-  margin: 0;
-  max-width: 32em;
-  text-align: center;
-  pointer-events: none;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(1rem, 2vw, 1.4rem);
-  line-height: 1.6;
-  letter-spacing: 0.01em;
-  color: #ffffff;
-  mix-blend-mode: difference;
-  opacity: 1;
-  transition: opacity 1.2s ease;
-}
-
-.vg-intro.is-hidden {
-  opacity: 0;
-}
-
 .vg-word {
   position: fixed;
   top: 56%;
