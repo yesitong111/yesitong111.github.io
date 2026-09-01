@@ -85,24 +85,27 @@
     '  float clip = step(uClipL, base.x) * step(base.x, uClipR);',
     // 尘埃/散落锚点：全屏随机
     '  vec2 anchor = vec2(hash(vec2(aSeed, 1.7)) * 2.0 - 1.0, hash(vec2(aSeed, 3.1)) * 2.0 - 1.0);',
-    // 主体粒子错峰汇聚（uFocus 0→1，按 seed 陆续归位）；轮廓粒子更早汇聚（特写阶段轮廓先清晰）
-    '  float local = smoothstep(aSeed * 0.7, aSeed * 0.7 + 0.3, uFocus) * (1.0 - aAmbient);',
-    '  float edgeFocus = smoothstep(0.04, 0.22, uFocus) * aEdge;',
-    '  local = max(local, edgeFocus);',
-    // 汇聚前的自由散落：噪声流场驱动，无序漂浮（非单向），速度各异
+    // 电影镜头叙事：猫本就存在于世界中，开场镜头太近(猫在画面之外)，随滚轮视野缩小/平移，猫从画面外进入。
+    // 故主体粒子恒位于猫形 base（位置只由镜头 uZoom/uCam/uFaceScreen 决定），不从随机点飞入拼凑；
+    // uFocus 仅作“显形”进度：控制淡入透明度与微动幅度（轮廓粒子略早淡入）。
+    '  float reveal = uFocus * (1.0 - aAmbient);',
+    '  float edgeReveal = smoothstep(0.02, 0.16, uFocus) * aEdge;',
+    '  reveal = max(reveal, edgeReveal);',
+    // 尘埃：噪声流场驱动，全屏无序漂浮（非单向），速度各异
     '  float spd = 0.05 + aSeed * 0.14;',
     '  vec2 f1 = vec2(vnoise(anchor * 2.2 + vec2(uTime * spd, 0.0)), vnoise(anchor * 2.2 + vec2(0.0, uTime * spd)));',
     '  vec2 wander = (f1 - 0.5) * 1.6;',
     '  vec2 freePos = anchor + wander;',
-    '  vec2 pos = mix(freePos, base, local);',
+    // 尘埃走自由漂浮位；主体恒走猫形位（镜头决定其在画面中的位置/大小），不飞入
+    '  vec2 pos = mix(base, freePos, aAmbient);',
     // 章节散射（vangogh模式滚动散开，绕原位）
     '  float r = hash(aPos * vec2(143.7, 211.3) + aSeed);',
     '  float ang = r * 6.2831853;',
     '  float rad = 0.6 + 1.8 * hash(aPos * vec2(97.3, 51.1) + aSeed);',
     '  vec2 scattered = pos + vec2(cos(ang), sin(ang)) * rad * (1.0 - aAmbient);',
     '  pos = mix(pos, scattered, uProgress);',
-    // 微运动：尘埃持续无序漂浮(幅度大)；主体成型后小范围缓慢漂移(活着、不抽搐、不静止)
-    '  float mAmp = aAmbient * 0.10 + (1.0 - aAmbient) * mix(0.06, 0.012, local);',
+    // 微运动：尘埃持续无序漂浮(幅度大)；主体小范围缓慢漂移(活着、不抽搐、不静止)，随显形增强
+    '  float mAmp = aAmbient * 0.10 + (1.0 - aAmbient) * 0.012 * reveal;',
     '  vec2 mN = vec2(vnoise(aPos * 5.0 + vec2(uTime * 0.12, aSeed * 9.0)),',
     '                 vnoise(aPos * 5.0 + vec2(aSeed * 5.0, uTime * 0.14)));',
     '  pos += (mN - 0.5) * 2.0 * mAmp;',
@@ -114,25 +117,23 @@
     // 相机视差：鼠标移动=摄影机偏移，近处粒子位移大（原网页交互方式）
     '  vec2 par = uView * (0.25 + aSeed * 0.75);',
     '  vec2 finalPos = pos + push + par;',
-    // 粒子大小：尘埃大号常驻（开场偏大、大小不一）；主体汇聚时轻微脉冲、成型后整体变小但仍有大有小
-    '  float pulse = local * (1.0 - local) * 0.8;',
-    '  vGlint = pulse * (1.0 - aAmbient);',
-    '  float formed = local * (1.0 - aAmbient);',
-    // 尘埃(未聚合)整体放大 1.4 倍；主体成型后收缩到 0.62 倍；轮廓粒子保持 0.92 倍(特写阶段轮廓大而清晰)
-    '  float formScale = mix(1.0, mix(0.62, 0.92, aEdge), local);',
+    '  vGlint = 0.0;',
+    // 粒子大小：尘埃大号常驻（开场偏大、大小不一）；主体显形后整体变小，轮廓粒子保持较大(特写清晰)
+    '  float formScale = mix(1.0, mix(0.62, 0.92, aEdge), reveal);',
     '  float baseSize = aSize * (aAmbient * 1.4 + (1.0 - aAmbient) * formScale);',
-    // 少数粒子低频变大（大颗粒数量少、出现频率低，成型后依然偶现）；频率慢(0.18rad/s)无闪烁
+    // 少数粒子低频变大（大颗粒数量少、频率低）；慢(0.18rad/s)无闪烁
     '  float bigGate = step(0.95, hash(vec2(aSeed, 3.3)));',
-    '  float big = bigGate * (0.6 + 1.8 * (0.5 + 0.5 * sin(uTime * 0.18 + aSeed * 40.0))) * (aAmbient * 1.2 + formed);',
-    '  float size = baseSize + big + vGlint * 0.8;',
-    // 轮廓粒子沿剪影边缘小范围流动：居中平滑噪声漂移(不抽搐、不单向)，缓慢有流动感
+    '  float big = bigGate * (0.6 + 1.8 * (0.5 + 0.5 * sin(uTime * 0.18 + aSeed * 40.0))) * (aAmbient * 1.2 + reveal);',
+    '  float size = baseSize + big;',
+    // 轮廓粒子沿剪影边缘小范围平滑流动：居中缓慢噪声漂移(不抽搐、不单向)，有流动感
     '  vec2 eN = vec2(vnoise(aPos * 2.5 + vec2(uTime * 0.06, aSeed * 7.0)),',
     '                 vnoise(aPos * 2.5 + vec2(aSeed * 7.0, uTime * 0.06)));',
-    '  vec2 eFlow = (eN - 0.5) * 2.0 * 0.022 * aEdge * local;',
+    '  vec2 eFlow = (eN - 0.5) * 2.0 * 0.022 * aEdge * reveal;',
     '  finalPos += eFlow;',
     '  gl_Position = vec4(finalPos, 0.0, 1.0);',
     '  gl_PointSize = size * uPointSize * clip;',
-    '  vAlpha = aAlpha * uAlphaScale * clip;',
+    // 透明度：尘埃常显；主体随显形淡入（猫是随镜头进入画面，而非粒子飞入拼凑）
+    '  vAlpha = aAlpha * uAlphaScale * clip * mix(1.0, reveal, 1.0 - aAmbient);',
     '}'
   ].join('\n');
 
@@ -422,9 +423,9 @@
       var x = Math.random();
       // 右侧密度偏置：越靠右保留概率越高（左~45% → 右~100%），画面右侧更密集
       if (Math.random() > 0.45 + 0.55 * x) continue;
-      // 大小不一、整体偏大：多数中大粒，约1/5为明显大颗粒（开场尘埃感，参考图2）
-      var sz = 1.6 + Math.random() * 3.0;
-      if (Math.random() < 0.22) sz += 3.0 + Math.random() * 5.0;
+      // 大小不一、整体偏大：多数中粒，约1/6为明显大颗粒（最大的更大，参考图2的大圆斑）
+      var sz = 1.2 + Math.random() * 2.4;
+      if (Math.random() < 0.16) sz += 3.5 + Math.random() * 5.5;
       arr.push(
         x, Math.random(),                        // 全屏随机位置（右侧偏密）
         sz,                                      // 大小不一、整体偏大（含明显大颗粒）
@@ -545,7 +546,7 @@
     // 电影取景（脸部特写→全身）；尘埃/无脸数据层不受影响
     var fc = layer.face || CFG.faceUV || [0.5, 0.36];
     gl.uniform1f(U.uCam, camState.cam);
-    gl.uniform1f(U.uZoom, CFG.faceZoom || 1.9);
+    gl.uniform1f(U.uZoom, camState.zoom);
     gl.uniform2f(U.uFaceUV, fc[0], fc[1]);
     gl.uniform2f(U.uFaceScreen, camState.faceScreen[0], camState.faceScreen[1]);
     gl.uniform3f(U.uColor, layer.color[0], layer.color[1], layer.color[2]);
@@ -553,8 +554,8 @@
     gl.drawArrays(gl.POINTS, 0, layer.count);
   }
 
-  // 电影镜头状态：cam 0=脸部特写(右) → 1=全身(居中)；faceScreen=特写时脸部落点
-  var camState = { cam: 1, faceScreen: CFG.faceScreen || [0.55, 0.08] };
+  // 电影镜头状态：cam 0=脸部特写(右) → 1=全身(居中)；zoom=镜头放大倍数；faceScreen=特写时脸部落点
+  var camState = { cam: 1, zoom: CFG.faceZoom || 1.9, faceScreen: CFG.faceScreen || [0.55, 0.08] };
 
   function frame(dt) {
     time += dt;
@@ -565,12 +566,18 @@
     var p = progress;
     var w1, w2, scatter1, scatter2, focus, contrast, edge;
     if (CINEMATIC) {
-      // 电影叙事：满屏尘埃无序漂浮 → 脸在右侧特写聚合 → 镜头收缩拉远、猫移到中央展示全身
+      // 电影叙事（摄像机拉远）：开场镜头极近、猫在画面右侧之外；随滚轮视野扩大/平移，
+      // 猫从画面之外滑入（脸部特写在右）→ 继续拉远，猫移到中央展示全身。猫恒在猫形位，不飞入拼凑。
       w1 = 1; w2 = 0;
       scatter1 = 0; scatter2 = 0;
-      focus = smoothstep(0.12, 0.50, p);                 // 猫粒子汇聚
-      var cam = smoothstep(0.52, 0.90, p);               // 0=特写 → 1=全身
+      var t = smoothstep(0.03, 0.97, p);
+      var slide = smoothstep(0.0, 0.45, t);               // 阶段A：猫从右外滑入到右侧特写
+      var cam = smoothstep(0.50, 0.95, t);                // 阶段B：特写 → 拉远居中全身
       camState.cam = cam;
+      camState.zoom = 2.1 + 0.6 * (1 - slide);            // 镜头倍数 2.7(极近) → 2.1(特写)
+      var fx = 2.9 + (0.60 - 2.9) * slide;                // 脸部落点：画面右外(2.9) → 右侧特写位(0.60)
+      camState.faceScreen = [fx, 0.05];
+      focus = slide;                                       // 猫随镜头进入画面而淡入显形（非粒子飞入）
       contrast = smoothstep(0.02, 0.40, p);              // 背景渐变渐显
       // 渐变过渡带：一开始偏右，随滚动移到画面中间
       edge = (CFG.edgeStart != null ? CFG.edgeStart : 0.55) * (1 - cam) + EDGE_NDC * cam;
