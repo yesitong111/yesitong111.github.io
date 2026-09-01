@@ -58,10 +58,8 @@
     'uniform vec2 uMouse;',
     'uniform vec2 uView;',       // 相机视差（鼠标移动=摄影机偏移，原网页交互）
     'uniform float uSweep;',     // 0→1.3 聚合前沿，从左向右扫过（人像从左侧显现）
-    'uniform float uCam;',       // 电影取景：0=脸部特写(右) → 1=全身(居中)
-    'uniform float uZoom;',      // 特写放大倍数
-    'uniform vec2 uFaceUV;',     // 脸部在图像 uv 中的重心
-    'uniform vec2 uFaceScreen;', // 特写时脸部在屏幕 NDC 的落点
+    'uniform float uCamScale;',  // 电影镜头：视野缩放倍数（>1 镜头推近/猫在画面外；=1 全身取景）
+    'uniform vec2 uCamPivot;',   // 变焦光心（NDC），固定不动——拉远时原画面外内容从边缘入镜（非平移滑入）
     'varying float vAlpha;',
     'varying float vGlint;',     // 扫过前端粒子短暂放大（新区域突显）
     'float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }',
@@ -77,26 +75,22 @@
     'void main(){',
     // 全身取景下的 NDC 位置
     '  vec2 posNDC = vec2((aPos.x - 0.5) * 2.0 * uKX + uOff.x, (0.5 - aPos.y) * 2.0 * uKY + uOff.y);',
-    // 猫脸在世界 NDC 中的位置（变焦固定焦点）
-    '  vec2 fNdc = vec2((uFaceUV.x - 0.5) * 2.0 * uKX + uOff.x, (0.5 - uFaceUV.y) * 2.0 * uKY + uOff.y);',
-    // 电影镜头（纯变焦拉远，非滑入）：以猫脸世界位置 fNdc 为固定焦点缩放。
-    // uZoom 大(长焦/视野窄)时只见焦点附近局部(猫脸中央)，身体轮廓在画框之外(被 gl_Position 裁切)；
-    // uZoom→1(广角/视野宽)时全貌纳入、猫居中。焦距缩小全程焦点不动、物体只缩放，无横向滑动。
-    '  vec2 closeUp = fNdc + (posNDC - fNdc) * uZoom;',
-    '  vec2 base = mix(closeUp, posNDC, uCam);',
-    // 左右裁剪（vangogh 章节用；电影模式全开 = -2..2，无任何硬分界线）
-    '  float clip = step(uClipL, base.x) * step(base.x, uClipR);',
+    // 电影镜头（纯光学变焦，非平移）：以固定光心 uCamPivot 为中心缩放取景。
+    //   uCamScale>1 镜头推近（取景框小，猫在画面右侧之外）；随滚轮 uCamScale→1 拉远，取景框扩大，
+    //   原本在画面外的猫从右边缘“入镜”——内容不动、是镜头视野把它取进来，不是猫平移滑入。
+    '  vec2 base = uCamPivot + (posNDC - uCamPivot) * uCamScale;',
+    // 左右裁剪（vangogh 章节用；电影模式主体全开 = -2..2）。尘埃恒全屏(freePos)，不参与猫形裁剪
+    '  float clip = mix(step(uClipL, base.x) * step(base.x, uClipR), 1.0, aAmbient);',
     // 尘埃/散落锚点：全屏随机
     '  vec2 anchor = vec2(hash(vec2(aSeed, 1.7)) * 2.0 - 1.0, hash(vec2(aSeed, 3.1)) * 2.0 - 1.0);',
-    // 电影镜头叙事（纯变焦拉远，非滑入）：猫本就存在于世界中，开场焦距大(视野窄、只看得见焦点附近)，
-    // 猫的其余部分在画框之外；随滚轮焦距缩小(uZoom 大→1)、视野扩大，原先画外的猫被纳入画面（缩放出现，非平移）。
-    // 主体粒子恒位于猫形 base（= 焦点 + 相对位移×uZoom），画外部分由 gl_Position 裁切自然不可见。
+    // 电影镜头叙事（纯光学变焦）：猫恒处于猫形 base（光心固定、仅缩放），开场镜头推近(uCamScale大)时猫在画面右侧之外；
+    // 随滚轮拉远(uCamScale→1)取景框扩大，猫被“取入”画面从右边缘入镜——内容不移动、不滑入、不飞入拼凑。
     // 尘埃：噪声流场驱动，全屏无序漂浮（非单向），速度各异
     '  float spd = 0.05 + aSeed * 0.14;',
     '  vec2 f1 = vec2(vnoise(anchor * 2.2 + vec2(uTime * spd, 0.0)), vnoise(anchor * 2.2 + vec2(0.0, uTime * spd)));',
     '  vec2 wander = (f1 - 0.5) * 1.6;',
     '  vec2 freePos = anchor + wander;',
-    // 尘埃走自由漂浮位；主体恒走猫形位（镜头变焦决定其在画面中的位置/大小），不飞入不横滑
+    // 尘埃走自由漂浮位(屏幕空间)；主体恒走猫形位(镜头缩放)，出画者由取景框/视口自然裁切
     '  vec2 pos = mix(base, freePos, aAmbient);',
     // 章节散射（vangogh模式滚动散开，绕原位）
     '  float r = hash(aPos * vec2(143.7, 211.3) + aSeed);',
@@ -105,7 +99,7 @@
     '  vec2 scattered = pos + vec2(cos(ang), sin(ang)) * rad * (1.0 - aAmbient);',
     '  pos = mix(pos, scattered, uProgress);',
     // 微运动：尘埃持续无序漂浮(幅度大)；主体小范围缓慢漂移(活着、不抽搐、不静止)
-    '  float mAmp = aAmbient * 0.10 + (1.0 - aAmbient) * 0.010;',
+    '  float mAmp = aAmbient * 0.10 + (1.0 - aAmbient) * 0.012;',
     '  vec2 mN = vec2(vnoise(aPos * 5.0 + vec2(uTime * 0.12, aSeed * 9.0)),',
     '                 vnoise(aPos * 5.0 + vec2(aSeed * 5.0, uTime * 0.14)));',
     '  pos += (mN - 0.5) * 2.0 * mAmp;',
@@ -118,23 +112,21 @@
     '  vec2 par = uView * (0.25 + aSeed * 0.75);',
     '  vec2 finalPos = pos + push + par;',
     '  vGlint = 0.0;',
-    // 粒子大小：尘埃大号常驻(开场偏大、大小不一)；主体随变焦近大远小(温和、封顶，长焦时稀疏中粒似尘埃，拉远后归位)，
-    // uCam=1(全身/非电影模式)时不做变焦缩放；轮廓粒子略大(特写清晰)
-    '  float psZoom = mix(1.0, clamp(0.75 + 0.35 * uZoom, 0.75, 2.2), 1.0 - uCam);',
-    '  float subjScale = mix(0.70, 0.92, aEdge) * psZoom;',
+    // 粒子大小：尘埃屏幕空间常显(偏大)；主体随镜头真实缩放——推近(uCamScale大)特写粒子大、拉远到全身变小，轮廓粒子略大
+    '  float subjScale = uCamScale * mix(1.0, 1.15, aEdge);',
     '  float baseSize = aSize * (aAmbient * 1.4 + (1.0 - aAmbient) * subjScale);',
     // 少数粒子低频变大（大颗粒数量少、频率低）；慢(0.18rad/s)无闪烁
     '  float bigGate = step(0.95, hash(vec2(aSeed, 3.3)));',
-    '  float big = bigGate * (0.6 + 1.8 * (0.5 + 0.5 * sin(uTime * 0.18 + aSeed * 40.0))) * (aAmbient * 1.2 + (1.0 - aAmbient) * psZoom * 0.5);',
+    '  float big = bigGate * (0.6 + 1.8 * (0.5 + 0.5 * sin(uTime * 0.18 + aSeed * 40.0))) * (aAmbient * 1.2 + (1.0 - aAmbient));',
     '  float size = baseSize + big;',
     // 轮廓粒子沿剪影边缘小范围平滑流动：居中缓慢噪声漂移(不抽搐、不单向)，有流动感
     '  vec2 eN = vec2(vnoise(aPos * 2.5 + vec2(uTime * 0.06, aSeed * 7.0)),',
     '                 vnoise(aPos * 2.5 + vec2(aSeed * 7.0, uTime * 0.06)));',
-    '  vec2 eFlow = (eN - 0.5) * 2.0 * 0.022 * aEdge;',
+    '  vec2 eFlow = (eN - 0.5) * 2.0 * 0.022 * aEdge * (1.0 - aAmbient);',
     '  finalPos += eFlow;',
     '  gl_Position = vec4(finalPos, 0.0, 1.0);',
     '  gl_PointSize = size * uPointSize * clip;',
-    // 透明度：主体常显（画外部分由 gl_Position 自然裁切，故猫是随视野扩大“纳入画面”而非淡入/飞入）
+    // 透明度：恒为粒子本色；出画部分由取景框/视口几何裁切（真实镜头硬边缘），不做淡入/飞入
     '  vAlpha = aAlpha * uAlphaScale * clip;',
     '}'
   ].join('\n');
@@ -198,7 +190,7 @@
     aEdge: gl.getAttribLocation(prog, 'aEdge')
   };
   var U = {};
-  ['uTime', 'uProgress', 'uFocus', 'uSweep', 'uCam', 'uZoom', 'uFaceUV', 'uFaceScreen',
+  ['uTime', 'uProgress', 'uFocus', 'uSweep', 'uCamScale', 'uCamPivot',
    'uKX', 'uKY', 'uOff', 'uPointSize', 'uMouseRadius',
    'uMouseStrength', 'uAlphaScale', 'uClipL', 'uClipR', 'uMouse', 'uView', 'uColor'].forEach(function (n) {
     U[n] = gl.getUniformLocation(prog, n);
@@ -545,19 +537,13 @@
     gl.uniform2f(U.uOff, layer.ox, layer.oy);
     gl.uniform1f(U.uClipL, layer.clipL);
     gl.uniform1f(U.uClipR, layer.clipR);
-    // 电影取景（脸部特写→全身）；尘埃/无脸数据层不受影响
-    var fc = layer.face || CFG.faceUV || [0.5, 0.36];
-    gl.uniform1f(U.uCam, camState.cam);
-    gl.uniform1f(U.uZoom, camState.zoom);
-    gl.uniform2f(U.uFaceUV, fc[0], fc[1]);
-    gl.uniform2f(U.uFaceScreen, camState.faceScreen[0], camState.faceScreen[1]);
     gl.uniform3f(U.uColor, layer.color[0], layer.color[1], layer.color[2]);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.drawArrays(gl.POINTS, 0, layer.count);
   }
 
-  // 电影镜头状态：cam 0=脸部特写(右) → 1=全身(居中)；zoom=镜头放大倍数；faceScreen=特写时脸部落点
-  var camState = { cam: 1, zoom: CFG.faceZoom || 1.9, faceScreen: CFG.faceScreen || [0.55, 0.08] };
+  // 电影镜头状态（纯光学变焦）：camScale=视野缩放倍数（>1 推近，1 全身）；camPivot=固定光心(NDC)
+  var camState = { scale: 1, pivot: CFG.camPivot || [-1.3, 0.0] };
 
   function frame(dt) {
     time += dt;
@@ -568,32 +554,32 @@
     var p = progress;
     var w1, w2, scatter1, scatter2, focus, contrast, edge;
     if (CINEMATIC) {
-      // 电影叙事（纯变焦拉远，非滑入）：镜头以猫脸为固定焦点，焦距 uZoom 由大(长焦/视野窄)→1(广角/视野宽)。
-      // 开场视野极窄、只见焦点附近(放大的局部粒子，似尘埃)，猫的身体轮廓在画框之外；
-      // 随焦距缩小、视野扩大，原先在画外的猫被“纳入画面”——全程焦点不动、猫只缩放不横向滑动。
+      // 电影叙事（纯光学变焦拉远，非平移）：光心 uCamPivot 固定不动，开场镜头推近(uCamScale大)、
+      // 取景框小，猫在画面右侧之外；随滚轮 uCamScale→1 拉远，取景框以光心为锚扩大，
+      // 原本在画面外的猫被“取入”画面、从右边缘入镜（内容不移动，不是滑入）。
       w1 = 1; w2 = 0;
       scatter1 = 0; scatter2 = 0;
-      var t = smoothstep(0.05, 0.98, p);
-      camState.cam = 0;                                     // 全程走变焦公式（焦点+相对位移×uZoom）
-      var z0 = CFG.zoomStart != null ? CFG.zoomStart : 8.0; // 开场长焦倍数（越小越早看到全貌）
-      camState.zoom = 1.0 + (z0 - 1.0) * (1.0 - t);         // 焦距 z0 → 1（拉远、视野扩大）
-      focus = 1;                                            // 主体常显（画外部分由 gl_Position 裁切自然不可见）
+      var t = smoothstep(0.03, 0.97, p);
+      var S0 = CFG.camScaleStart || 5.5;                 // 开场推近倍数
+      camState.scale = 1.0 + (S0 - 1.0) * (1.0 - t);     // 5.5(推近/猫在画外) → 1(全身取景)
+      camState.pivot = CFG.camPivot || [-1.3, 0.0];      // 固定光心(画面左外)，拉远时右侧内容入镜
+      focus = 1;                                          // 猫恒存在，出画部分由取景框几何裁切
       contrast = smoothstep(0.02, 0.40, p);              // 背景渐变渐显
-      // 渐变过渡带：一开始偏右，随拉远移到画面中间
-      edge = (CFG.edgeStart != null ? CFG.edgeStart : 0.55) * (1.0 - t) + EDGE_NDC * t;
+      // 渐变过渡带：一开始偏右，随滚动移到画面中间
+      edge = (CFG.edgeStart != null ? CFG.edgeStart : 0.55) * (1 - t) + EDGE_NDC * t;
     } else if (SINGLE) {
       w1 = 1; w2 = 0;
       scatter1 = smoothstep(0.55, 0.95, p);
       scatter2 = 0;
       focus = 1; contrast = 1; edge = EDGE_NDC;
-      camState.cam = 1;
+      camState.scale = 1;
     } else {
       w1 = 1 - smoothstep(0.40, 0.52, p);
       w2 = smoothstep(0.46, 0.58, p);
       scatter1 = smoothstep(0.06, 0.42, p);
       scatter2 = smoothstep(0.60, 0.95, p);
       focus = 1; contrast = 1; edge = EDGE_NDC;
-      camState.cam = 1;
+      camState.scale = 1;
     }
 
     // 相机视差：电影模式下鼠标移动=摄影机偏移（画面随鼠标同向轻移）
@@ -612,6 +598,9 @@
     gl.uniform1f(U.uMouseRadius, 0.16);
     // 电影模式：鼠标只控制视角，无斥力；vangogh模式：小半径轻柔斥力
     gl.uniform1f(U.uMouseStrength, CINEMATIC ? 0 : mouse.strength * 0.06);
+    // 电影镜头（纯光学变焦）：缩放倍数与固定光心
+    gl.uniform1f(U.uCamScale, camState.scale);
+    gl.uniform2f(U.uCamPivot, camState.pivot[0], camState.pivot[1]);
 
     for (var i = 0; i < layers.length; i++) {
       var L = layers[i];
