@@ -558,16 +558,17 @@
   // 电影镜头状态（纯光学变焦）：camScale=视野缩放倍数（>1 推近，1 全身）；camPivot=变焦光心(NDC)
   var camState = { scale: 1, pivot: [-0.55, 0.0] };
 
-  // 猫脸在世界坐标(NDC)中的垂直高度：从已采样图层的头部重心 + contain 系数算出（供开场把光心对准脸部）
+  // 猫脸(头部中心)在世界坐标(NDC)中的垂直高度：从已采样图层的头部重心 + contain 系数算出
+  // （电影镜头开场把光心置于其上方，使头部中心映射到屏幕垂直中部，形成脸部特写）
   function faceWorldY() {
     if (CFG.faceWorldY != null) return CFG.faceWorldY;
     for (var i = 0; i < layers.length; i++) {
       var L = layers[i];
       if (L.dust || !L.ky) continue;
       var hd = L.head || L.face;                 // 头部重心 [u,v]；无头部数据时退回脸部重心
-      if (hd) return (0.5 - (hd[1] - 0.02)) * 2 * L.ky; // 略向上修正，对准眼睛/脸部
+      if (hd) return (0.5 - hd[1]) * 2 * L.ky;   // 头部中心的世界 y
     }
-    return 0.66;                                 // 图片未加载完时的兜底值
+    return 0.6;                                  // 图片未加载完时的兜底值
   }
 
   function frame(dt) {
@@ -587,11 +588,16 @@
       scatter1 = 0; scatter2 = 0;
       var t = smoothstep(0.03, 0.97, p);
       var S0 = CFG.camScaleStart || 6.0;                 // 开场推近倍数
-      camState.scale = 1.0 + (S0 - 1.0) * (1.0 - t);     // 6.0(推近/只有脸的高度) → 1(全身取景)
-      var pivotX = CFG.camPivotX != null ? CFG.camPivotX : -0.55;  // 水平光心固定，拉远时右侧内容入镜
-      var faceY = faceWorldY();                           // 猫脸世界高度
-      // 光心垂直：t<0.45 保持在脸的高度（聚焦脸部）；0.45→0.92 平滑下移到 0（身体中心，露出全身）
-      var pivotY = faceY * (1.0 - smoothstep(0.45, 0.92, t));
+      var S = 1.0 + (S0 - 1.0) * (1.0 - t);              // 6.0(推近特写) → 1(全身取景)
+      camState.scale = S;
+      var pivotX = CFG.camPivotX != null ? CFG.camPivotX : -0.55;  // 水平光心固定，猫仍从画面右边缘入镜（非滑入）
+      var fy = faceWorldY();                             // 猫脸在世界中的垂直高度
+      // 光心垂直与变焦用同一参数 S 连续推导（无分段曲线）：推近段(S≥Sb)把光心置于猫脸上方，
+      //   使猫脸始终映射到屏幕垂直中部(脸部特写)、胸口/身体在画外；S 减小到 Sb 以下光心平滑落回
+      //   0(身体中心)，身体随之连续入镜——电影镜头语言：先聚焦人物脸部，变焦后呈现全身。
+      var Sb = CFG.camFaceHold || 2.2;
+      var pivotY = (S >= Sb) ? (fy * S / (S - 1.0))
+                             : (fy * Sb / (Sb - 1.0)) * smoothstep(1.0, Sb, S);
       camState.pivot = [pivotX, pivotY];
       focus = 1;                                          // 猫恒存在，出画部分由取景框几何裁切
       contrast = smoothstep(0.02, 0.40, p);              // 背景渐变渐显
