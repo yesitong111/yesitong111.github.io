@@ -331,6 +331,19 @@
     }
     if (fw > 0) layer.face = [fxw / fw / sw, fyw / fw / sh];
 
+    // 头部重心：仅取最上方 30% 的不透明像素（猫脸所在），用于电影镜头开场先聚焦脸部
+    var hxw = 0, hyw = 0, hw = 0;
+    for (y = 0; y < sh; y++) {
+      for (x = 0; x < sw; x++) {
+        p = y * sw + x;
+        if (data[p * 4 + 3] < 128) continue;
+        if (y > sh * 0.30) continue;
+        var ht = Math.min(1, Math.abs(luma[p] - base[p]) / 40) + (1 - luma[p] / 255) * 0.4;
+        hxw += x * ht; hyw += y * ht; hw += ht;
+      }
+    }
+    if (hw > 0) layer.head = [hxw / hw / sw, hyw / hw / sh];
+
     // 剪影边缘：抠图轮廓（透明/不透明交界处），用于 ghost 沿边缘勾勒 + 轮廓粒子流动
     var edgeMask = new Float32Array(sw * sh);
     for (var ey = 1; ey < sh - 1; ey++) {
@@ -542,8 +555,20 @@
     gl.drawArrays(gl.POINTS, 0, layer.count);
   }
 
-  // 电影镜头状态（纯光学变焦）：camScale=视野缩放倍数（>1 推近，1 全身）；camPivot=固定光心(NDC)
-  var camState = { scale: 1, pivot: CFG.camPivot || [-1.3, 0.0] };
+  // 电影镜头状态（纯光学变焦）：camScale=视野缩放倍数（>1 推近，1 全身）；camPivot=变焦光心(NDC)
+  var camState = { scale: 1, pivot: [-0.55, 0.0] };
+
+  // 猫脸在世界坐标(NDC)中的垂直高度：从已采样图层的头部重心 + contain 系数算出（供开场把光心对准脸部）
+  function faceWorldY() {
+    if (CFG.faceWorldY != null) return CFG.faceWorldY;
+    for (var i = 0; i < layers.length; i++) {
+      var L = layers[i];
+      if (L.dust || !L.ky) continue;
+      var hd = L.head || L.face;                 // 头部重心 [u,v]；无头部数据时退回脸部重心
+      if (hd) return (0.5 - (hd[1] - 0.02)) * 2 * L.ky; // 略向上修正，对准眼睛/脸部
+    }
+    return 0.66;                                 // 图片未加载完时的兜底值
+  }
 
   function frame(dt) {
     time += dt;
@@ -554,15 +579,20 @@
     var p = progress;
     var w1, w2, scatter1, scatter2, focus, contrast, edge;
     if (CINEMATIC) {
-      // 电影叙事（纯光学变焦拉远，非平移）：光心 uCamPivot 固定不动，开场镜头推近(uCamScale大)、
-      // 取景框小，猫在画面右侧之外；随滚轮 uCamScale→1 拉远，取景框以光心为锚扩大，
-      // 原本在画面外的猫被“取入”画面、从右边缘入镜（内容不移动，不是滑入）。
+      // 电影叙事（光学变焦）：水平光心固定（猫仍从画面右边缘被“取入”，不平移滑入）；
+      // 垂直方向开场光心对准猫脸（uCamScale 大=推近特写，只取得到脸的高度、猫在右画外），
+      // 随滚轮拉远 uCamScale→1，光心垂直在变焦中段平滑下移到身体中心，于是先露出脸部特写、
+      // 继续拉远才逐渐露出颈部与全身——经典电影镜头语言：先聚焦人物脸部，变焦后呈现全身。
       w1 = 1; w2 = 0;
       scatter1 = 0; scatter2 = 0;
       var t = smoothstep(0.03, 0.97, p);
-      var S0 = CFG.camScaleStart || 5.5;                 // 开场推近倍数
-      camState.scale = 1.0 + (S0 - 1.0) * (1.0 - t);     // 5.5(推近/猫在画外) → 1(全身取景)
-      camState.pivot = CFG.camPivot || [-1.3, 0.0];      // 固定光心(画面左外)，拉远时右侧内容入镜
+      var S0 = CFG.camScaleStart || 6.0;                 // 开场推近倍数
+      camState.scale = 1.0 + (S0 - 1.0) * (1.0 - t);     // 6.0(推近/只有脸的高度) → 1(全身取景)
+      var pivotX = CFG.camPivotX != null ? CFG.camPivotX : -0.55;  // 水平光心固定，拉远时右侧内容入镜
+      var faceY = faceWorldY();                           // 猫脸世界高度
+      // 光心垂直：t<0.45 保持在脸的高度（聚焦脸部）；0.45→0.92 平滑下移到 0（身体中心，露出全身）
+      var pivotY = faceY * (1.0 - smoothstep(0.45, 0.92, t));
+      camState.pivot = [pivotX, pivotY];
       focus = 1;                                          // 猫恒存在，出画部分由取景框几何裁切
       contrast = smoothstep(0.02, 0.40, p);              // 背景渐变渐显
       // 渐变过渡带：一开始偏右，随滚动移到画面中间
@@ -572,14 +602,14 @@
       scatter1 = smoothstep(0.55, 0.95, p);
       scatter2 = 0;
       focus = 1; contrast = 1; edge = EDGE_NDC;
-      camState.scale = 1;
+      camState.scale = 1; camState.pivot = [0, 0];
     } else {
       w1 = 1 - smoothstep(0.40, 0.52, p);
       w2 = smoothstep(0.46, 0.58, p);
       scatter1 = smoothstep(0.06, 0.42, p);
       scatter2 = smoothstep(0.60, 0.95, p);
       focus = 1; contrast = 1; edge = EDGE_NDC;
-      camState.scale = 1;
+      camState.scale = 1; camState.pivot = [0, 0];
     }
 
     // 相机视差：电影模式下鼠标移动=摄影机偏移（画面随鼠标同向轻移）
