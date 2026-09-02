@@ -148,14 +148,14 @@
     '                 vnoise(aPos * 2.5 + vec2(aSeed * 7.0, uTime * 0.06)));',
     '  vec2 eFlow = (eN - 0.5) * 2.0 * 0.022 * aEdge * (1.0 - aAmbient);',
     '  finalPos += eFlow;',
-    // 变焦自适应细节：推近(uCamScale大)时主体“内部”粒子按固定随机比例平滑收小淡出，呈稀疏点绘——
-    //   近景脸不糊、五官/毛发由疏密点出；轮廓(aEdge)严格线性放大保持细锐实线、不抽稀；尘埃(aAmbient)不抽稀，星空始终完整。
-    //   拉远(uCamScale→1)时 zAmt→0，全部粒子恢复饱满，全身猫完整。
-    '  float zAmt = smoothstep(1.0, 2.8, uCamScale);',
+    // 变焦自适应细节：只在“强推近”时才对主体内部粒子轻微抽稀（脸部特写取景框已对准猫脸、需要保留五官密度，
+    //   故抽稀阈值上移到 S>2、且更温和）；轮廓(aEdge)严格线性放大保持细锐实线不抽稀；尘埃(aAmbient)不抽稀。
+    //   拉远(S→1)时 zAmt→0，全部粒子恢复饱满，全身猫完整。
+    '  float zAmt = smoothstep(2.0, 4.5, uCamScale);',
     '  float interior = (1.0 - aEdge) * (1.0 - aAmbient);',
-    '  float thinGate = step(hash(vec2(aSeed * 13.7 + 1.1, aSeed * 7.7)), 0.70);',
+    '  float thinGate = step(hash(vec2(aSeed * 13.7 + 1.1, aSeed * 7.7)), 0.50);',
     '  float thin = zAmt * interior * thinGate;',
-    '  float detailKeep = 1.0 - thin * 0.88;',
+    '  float detailKeep = 1.0 - thin * 0.70;',
     '  gl_Position = vec4(finalPos, 0.0, 1.0);',
     '  gl_PointSize = size * uPointSize * clip * detailKeep;',
     // 透明度：恒为粒子本色；轮廓粒子提亮(勾边更明显)；被抽稀的内部粒子同步淡出；出画部分由视口几何裁切（真实镜头硬边缘）
@@ -615,8 +615,8 @@
   // 电影镜头状态（纯光学变焦）：camScale=视野缩放倍数（>1 推近，1 全身）；camPivot=变焦光心(NDC)
   var camState = { scale: 1, pivot: [-0.55, 0.0] };
 
-  // 猫脸(头部中心)在世界坐标(NDC)中的垂直高度：从已采样图层的头部重心 + contain 系数算出
-  // （电影镜头开场把光心置于其上方，使头部中心映射到屏幕垂直中部，形成脸部特写）
+  // 猫脸(头部中心)在世界坐标(NDC)中的高度：从已采样图层的头部重心 + contain 系数算出
+  // （电影镜头开场把光心反解为使该点落到屏幕 faceScreen 位置，形成真正的“脸部特写”）
   function faceWorldY() {
     if (CFG.faceWorldY != null) return CFG.faceWorldY;
     for (var i = 0; i < layers.length; i++) {
@@ -626,6 +626,18 @@
       if (hd) return (0.5 - hd[1]) * 2 * L.ky;   // 头部中心的世界 y
     }
     return 0.6;                                  // 图片未加载完时的兜底值
+  }
+
+  // 猫脸(头部中心)在世界坐标(NDC)中的水平位置（头部重心 u + ox 偏移，再按 contain 归一）
+  function faceWorldX() {
+    if (CFG.faceWorldX != null) return CFG.faceWorldX;
+    for (var i = 0; i < layers.length; i++) {
+      var L = layers[i];
+      if (L.dust || !L.kx) continue;
+      var hd = L.head || L.face;
+      if (hd) return ((hd[0] - 0.5) * 2 * L.kx + (L.ox || 0));
+    }
+    return 0.0;
   }
 
   function frame(dt) {
@@ -645,19 +657,23 @@
       w1 = 1; w2 = 0;
       scatter1 = 0; scatter2 = 0;
       var t = smoothstep(0.03, 0.97, p);
-      var S0 = CFG.camScaleStart || 6.0;                 // 开场推近倍数
-      camState.scale = 1.0 + (S0 - 1.0) * (1.0 - t);     // 6.0(推近特写) → 1(全身取景)
-      var pivotX = CFG.camPivotX != null ? CFG.camPivotX : -0.55;  // 水平光心固定，猫仍从画面右边缘入镜（非滑入）
-      // 垂直光心同样固定为一个常数（全程不随变焦移动）——纯光学变焦，光心不动，只有取景框扩大。
-      //   光心取在猫脸上方(约 1.33 倍猫脸高度)，使推近阶段猫脸落在屏幕垂直中部形成脸部特写、
-      //   胸口/身体在画外；随取景框扩大身体自然、单调地连续入镜。光心全程不动 ⇒ 画面绝不上下反复，
-      //   结尾 scale=1 时光心不起作用，猫完整居中全身。
-      var pivotY = (CFG.camPivotY != null) ? CFG.camPivotY : 1.33 * faceWorldY();
+      var S0 = (CFG.faceZoom != null) ? CFG.faceZoom : (CFG.camScaleStart || 2.6);  // 开场特写倍数
+      camState.scale = 1.0 + (S0 - 1.0) * (1.0 - t);     // S0(推近脸特写) → 1(全身取景)
+      // 纯光学变焦、光心全程固定：屏幕 = S·世界 + pivot·(1−S)。
+      //   按“开场(S=S0)时把猫脸世界点(wx,wy)对准屏幕 faceScreen(sx,sy)”反解固定光心：
+      //   pivot = (s − S0·world)/(1−S0)。这样近景真正框住猫脸（眼/鼻/耳在画内，跨明暗分界两侧可见），
+      //   随滚轮拉远取景框以该光心连续扩大，身体单调入镜，结尾 S=1 时光心失效、猫完整居中全身。
+      var fs = CFG.faceScreen || [0.2, 0.05];
+      var wx = faceWorldX(), wy = faceWorldY();
+      var denom = 1.0 - S0;
+      var pivotX = (CFG.camPivotX != null) ? CFG.camPivotX : (fs[0] - S0 * wx) / denom;
+      var pivotY = (CFG.camPivotY != null) ? CFG.camPivotY : (fs[1] - S0 * wy) / denom;
       camState.pivot = [pivotX, pivotY];
       focus = 1;                                          // 猫恒存在，出画部分由取景框几何裁切
       contrast = smoothstep(0.02, 0.40, p);              // 背景渐变渐显
-      // 渐变过渡带：一开始偏右，随滚动移到画面中间
-      edge = (CFG.edgeStart != null ? CFG.edgeStart : 0.55) * (1 - t) + EDGE_NDC * t;
+      // 渐变过渡带：开场对齐猫脸目标 x(特写时明暗分界正好擦过猫脸)，随滚动移到画面中间
+      var edge0 = (CFG.edgeStart != null) ? CFG.edgeStart : fs[0] + 0.42;
+      edge = edge0 * (1 - t) + EDGE_NDC * t;
     } else if (SINGLE) {
       w1 = 1; w2 = 0;
       scatter1 = smoothstep(0.55, 0.95, p);
