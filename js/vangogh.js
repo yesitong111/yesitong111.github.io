@@ -62,6 +62,7 @@
     'uniform vec2 uCamPivot;',   // 变焦光心（NDC），固定不动——拉远时原画面外内容从边缘入镜（非平移滑入）
     'varying float vAlpha;',
     'varying float vGlint;',     // 扫过前端粒子短暂放大（新区域突显）
+    'varying float vHard;',      // 粒子硬度 0=虚(柔羽化) ~ 1=实(锐利实心)，画面中有实有虚
     'float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }',
     'float vnoise(vec2 p){',
     '  vec2 i = floor(p); vec2 f = fract(p);',
@@ -78,9 +79,9 @@
     // 猫身呼吸感：组成猫的粒子(非尘埃)在世界坐标做缓慢、小范围、有机的噪声漂浮——
     //   加在镜头变换之前，故随变焦一致缩放(透视自然)；低频慢漂移(不抽搐、不单向、不破坏轮廓)，像呼吸/轻轻浮动。
     '  float subj = 1.0 - aAmbient;',
-    '  vec2 bN = vec2(vnoise(aPos * 3.0 + vec2(uTime * 0.09, aSeed * 6.1)),',
-    '                 vnoise(aPos * 3.0 + vec2(aSeed * 4.3, uTime * 0.10)));',
-    '  posNDC += (bN - 0.5) * 2.0 * 0.012 * subj;',
+    '  vec2 bN = vec2(vnoise(aPos * 3.0 + vec2(uTime * 0.10, aSeed * 6.1)),',
+    '                 vnoise(aPos * 3.0 + vec2(aSeed * 4.3, uTime * 0.11)));',
+    '  posNDC += (bN - 0.5) * 2.0 * 0.018 * subj;',
     // 电影镜头（纯光学变焦，非平移）：以固定光心 uCamPivot 为中心缩放取景。
     //   uCamScale>1 镜头推近（取景框小，猫在画面右侧之外）；随滚轮 uCamScale→1 拉远，取景框扩大，
     //   原本在画面外的猫从右边缘“入镜”——内容不动、是镜头视野把它取进来，不是猫平移滑入。
@@ -118,6 +119,9 @@
     '  vec2 par = uView * (0.25 + aSeed * 0.75);',
     '  vec2 finalPos = pos + push + par;',
     '  vGlint = 0.0;',
+    // 硬度：每颗粒子由种子决定 0~1（画面中有实有虚）；轮廓粒子偏硬以保持轮廓清晰；猫身比尘埃略硬一点
+    '  float hRand = hash(vec2(aSeed * 7.31 + 3.7, aSeed * 2.13));',
+    '  vHard = clamp(hRand + 0.15 + aEdge * 0.35 - aAmbient * 0.10, 0.0, 1.0);',
     // 粒子大小：尘埃屏幕空间常显(偏大)；主体随镜头真实缩放——推近(uCamScale大)特写粒子大、拉远到全身变小，轮廓粒子略大
     '  float subjScale = uCamScale * mix(1.0, 1.15, aEdge);',
     '  float baseSize = aSize * (aAmbient * 1.4 + (1.0 - aAmbient) * subjScale);',
@@ -142,11 +146,13 @@
     'uniform vec3 uColor;',
     'varying float vAlpha;',
     'varying float vGlint;',
+    'varying float vHard;',
     'void main(){',
-    // 软粒子：羽化边缘，接近炭笔素描质感
+    // 粒子有实有虚：vHard≈0 柔羽化(虚)、vHard≈1 锐利实心(实)。inner 越小越柔、越大越实。
     '  vec2 c = gl_PointCoord - vec2(0.5);',
     '  float d = length(c);',
-    '  float a = smoothstep(0.5, 0.15, d) * min(1.0, vAlpha + vGlint * 0.35);',
+    '  float inner = mix(0.06, 0.42, vHard);',
+    '  float a = smoothstep(0.5, inner, d) * min(1.0, vAlpha + vGlint * 0.35);',
     '  if (a < 0.01) discard;',
     '  gl_FragColor = vec4(uColor, a);',
     '}'
