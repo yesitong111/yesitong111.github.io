@@ -88,24 +88,24 @@
     '  vec2 base = uCamPivot + (posNDC - uCamPivot) * uCamScale;',
     // 左右裁剪（vangogh 章节用；电影模式主体全开 = -2..2）。尘埃恒全屏(freePos)，不参与猫形裁剪
     '  float clip = mix(step(uClipL, base.x) * step(base.x, uClipR), 1.0, aAmbient);',
-    // 尘埃锚点：世界坐标铺满一个较大范围(约 -2.2..2.2)，供变焦时近景粒子从画外涌入
-    '  vec2 anchor = vec2(hash(vec2(aSeed, 1.7)) * 4.4 - 2.2, hash(vec2(aSeed, 3.1)) * 4.4 - 2.2);',
-    // 电影镜头叙事（纯光学变焦）：猫恒处于猫形 base（光心固定、仅缩放），开场镜头推近(uCamScale大)时猫在画面右侧之外；
-    // 随滚轮拉远(uCamScale→1)取景框扩大，猫被“取入”画面从右边缘入镜——内容不移动、不滑入、不飞入拼凑。
-    // 尘埃同样纳入镜头世界：每颗粒子有随机深度 dDepth(0远→1近)。
-    //   远景(depth≈0)以画面中心为锚投影——始终铺满全屏，随变焦近大远小/由疏到密；
-    //   近景(depth≈1)以猫镜头光心 uCamPivot 为锚投影——推近时像猫一样被放大推到画外(大光斑)、拉远时从边缘涌入画面，形成景深视差。
+    // 尘埃锚点：远景星空铺满屏幕[-1,1]；近景光斑铺到更大世界范围[-2.2,2.2]供变焦时从画外涌入
+    '  vec2 anchorFar  = vec2(hash(vec2(aSeed, 1.7)) * 2.0 - 1.0, hash(vec2(aSeed, 3.1)) * 2.0 - 1.0);',
+    '  vec2 anchorNear = anchorFar * 2.2;',
+    // 电影镜头叙事（纯光学变焦）：猫恒处于猫形 base（光心固定、仅缩放）。尘埃分两层景深：
+    //   远景(depth≈0)=无限远星空，几乎固定在屏幕上(始终密集铺满、不随变焦散开)，只随镜头极轻微缩放；
+    //   近景(depth≈1)=空气中的大光斑，以猫镜头光心 uCamPivot 为锚按 S 投影——推近成大光斑推到画外、拉远从边缘涌入。
     '  float dDepth = hash(vec2(aSeed, 5.9));',
-    '  float kFar = 1.0 + 0.35 * (uCamScale - 1.0);',    // 远景对变焦的温和响应(也近大远小/由疏到密，但比近景弱)
-    '  float posK = mix(kFar, uCamScale, dDepth);',       // 位置随变焦的响应强度：远景温和、近景=S(与猫一致)
-    '  vec2 dPivot = mix(vec2(0.0), uCamPivot, dDepth);', // 远景绕画面中心、近景绕猫镜头光心
-    '  vec2 dBase = dPivot + (anchor - dPivot) * posK;',
+    '  float farK = 1.0 + 0.12 * (uCamScale - 1.0);',      // 远景星空对变焦的极轻微响应
+    '  vec2 dBaseFar  = anchorFar * farK;',                 // 远景：绕画面中心、近于固定(满天星恒在)
+    '  vec2 dBaseNear = uCamPivot + (anchorNear - uCamPivot) * uCamScale;', // 近景：绕猫镜头光心、随变焦涌入
+    '  vec2 dBase = mix(dBaseFar, dBaseNear, dDepth);',
+    '  float posK = mix(farK, uCamScale, dDepth);',         // 尺寸/漂浮随变焦的响应强度
     // 噪声流场驱动的无序漂浮（非单向、速度各异），作为空气运动温和叠加在世界投影位上
     '  float spd = 0.05 + aSeed * 0.14;',
-    '  vec2 f1 = vec2(vnoise(anchor * 2.2 + vec2(uTime * spd, 0.0)), vnoise(anchor * 2.2 + vec2(0.0, uTime * spd)));',
+    '  vec2 f1 = vec2(vnoise(anchorFar * 2.2 + vec2(uTime * spd, 0.0)), vnoise(anchorFar * 2.2 + vec2(0.0, uTime * spd)));',
     '  vec2 wander = (f1 - 0.5) * 1.6;',
     '  vec2 freePos = dBase + wander * 0.8;',
-    // 尘埃走世界投影位(随变焦近大远小/景深涌入)；主体恒走猫形位(镜头缩放)，出画者由取景框/视口自然裁切
+    // 尘埃走世界投影位(远景星空恒铺满/近景光斑随变焦涌入)；主体恒走猫形位(镜头缩放)，出画者由视口自然裁切
     '  vec2 pos = mix(base, freePos, aAmbient);',
     // 章节散射（vangogh模式滚动散开，绕原位）
     '  float r = hash(aPos * vec2(143.7, 211.3) + aSeed);',
@@ -131,11 +131,12 @@
     // 硬度：每颗粒子由种子决定 0~1（画面中有实有虚）；轮廓粒子偏硬以保持轮廓清晰；星点也偏实(星空锐利光点)
     '  float hRand = hash(vec2(aSeed * 7.31 + 3.7, aSeed * 2.13));',
     '  vHard = clamp(hRand + 0.20 + aEdge * 0.40, 0.0, 1.0);',
-    // 粒子大小：主体随镜头真实缩放——推近(uCamScale大)特写粒子大、拉远到全身变小，轮廓粒子略大。
-    //   尘埃同样随变焦近大远小：近景(depth1)按 S 缩放(推近成大光斑、拉远变小变密)，远景(depth0)温和缩放；
-    //   无论远近，aSize 里的大颗粒与 big 脉冲始终存在(画面里仍会冒出大粒子)，并非全部变小。
-    '  float subjScale = uCamScale * mix(1.0, 1.15, aEdge);',
-    '  float dSizeK = mix(kFar, uCamScale, dDepth);',
+    // 粒子大小：主体随镜头缩放——用 pow(S,0.92) 使特写时粒子略小于真实放大(猫更通透、白粒子不糊成墙)、拉远接近 S；
+    //   轮廓粒子额外放大(勾边更显眼)。尘埃：远景星空尺寸近乎恒定(满天星大小不变)、近景光斑随 S 缩放；
+    //   aSize 大颗粒与 big 脉冲始终存在，任意焦段画面里仍会冒出大粒子。
+    '  float subjZoom = pow(uCamScale, 0.92);',
+    '  float subjScale = subjZoom * mix(1.0, 1.30, aEdge);',
+    '  float dSizeK = mix(1.0, uCamScale, dDepth);',
     '  float baseSize = aSize * (aAmbient * 1.4 * dSizeK + (1.0 - aAmbient) * subjScale);',
     // 少数粒子低频变大（大颗粒数量少、频率低）；慢(0.18rad/s)无闪烁
     '  float bigGate = step(0.95, hash(vec2(aSeed, 3.3)));',
@@ -148,8 +149,9 @@
     '  finalPos += eFlow;',
     '  gl_Position = vec4(finalPos, 0.0, 1.0);',
     '  gl_PointSize = size * uPointSize * clip;',
-    // 透明度：恒为粒子本色；出画部分由取景框/视口几何裁切（真实镜头硬边缘），不做淡入/飞入
-    '  vAlpha = aAlpha * uAlphaScale * clip;',
+    // 透明度：恒为粒子本色；轮廓粒子提亮(勾边更明显)；出画部分由视口几何裁切（真实镜头硬边缘）
+    '  float edgeGlow = mix(1.0, 1.45, aEdge * (1.0 - aAmbient));',
+    '  vAlpha = aAlpha * uAlphaScale * clip * edgeGlow;',
     '}'
   ].join('\n');
 
@@ -391,17 +393,17 @@
         var isEdge = edgeMask[p];          // 剪影轮廓（所有层通用）：近景特写时清晰勾勒外形
         var w = 0, sz, al, edgeFlag = isEdge ? 1 : 0;
         if (layer.mode === 'ghost') {
-          // 幽灵轮廓：身体=稀疏、大粒、低透明的模糊虚影；剪影边缘=小而密、亮而实的清晰描边
-          //   （近景放大后轮廓线依然锐利可辨，不再因大软半透粒子糊成一片）
+          // 幽灵轮廓：身体=极稀疏、大粒、很淡的虚影(仅托体积、不抢轮廓)；剪影边缘=小而密、极亮极实的清晰描边
+          //   （近景放大后轮廓线依然锐利醒目，黑/白两层分别在亮底/暗底上形成高对比勾边）
           var body = Math.max(0, 1 - baseBig[p] / 200);
-          if (body < 0.12 && !isEdge) continue;
-          w = body * 0.42 + isEdge * 1.0;
+          if (body < 0.10 && !isEdge) continue;
+          w = body * 0.30 + isEdge * 1.0;
           if (isEdge) {
-            sz = 0.85 + Math.random() * 0.95;          // 轮廓：小实点，勾线
-            al = 0.60 + Math.random() * 0.28;          // 轮廓：亮而实（该提亮处提亮）
+            sz = 0.8 + Math.random() * 0.9;              // 轮廓：小实点，勾出锐利线
+            al = 0.78 + Math.random() * 0.22;            // 轮廓：极亮极实（白层纯白、黑层纯黑）
           } else {
-            sz = 2.2 + Math.random() * 2.6;            // 身体虚影：大而软淡
-            al = 0.05 + body * 0.09;
+            sz = 2.6 + Math.random() * 3.0;              // 身体虚影：更大更软更淡
+            al = 0.035 + body * 0.07;
           }
         } else if (layer.mode === 'dark') {
           // 黑粒子（白底上）：越暗越密，纹理处更实；尺寸方差大（组成猫的粒子有大有小）
@@ -465,17 +467,17 @@
       var x = Math.random();
       // 右侧密度偏置：越靠右保留概率越高（左~45% → 右~100%），画面右侧更密集
       if (Math.random() > 0.45 + 0.55 * x) continue;
-      // 星空式星等分层：多数细小星点 + 少数中等星 + 极少数醒目大星斑；透明度也分层(有虚有实)，大小对比强、疏密有致
+      // 星空式星等分层：大量细密亮点(针尖星点) + 少数中等星 + 极少数醒目大星斑；透明度也分层(有虚有实)，大小对比强、疏密有致
       var r = Math.random(), sz, al;
-      if (r < 0.58) {                        // 细小星点（最密）
-        sz = 0.45 + Math.random() * 1.05;
-        al = 0.22 + Math.random() * 0.45;
-      } else if (r < 0.90) {                 // 中等星点
-        sz = 1.7 + Math.random() * 2.1;
-        al = 0.30 + Math.random() * 0.42;
+      if (r < 0.70) {                        // 细密星点（最密、针尖亮点）
+        sz = 0.28 + Math.random() * 0.85;
+        al = 0.30 + Math.random() * 0.50;
+      } else if (r < 0.92) {                 // 中等星点
+        sz = 1.4 + Math.random() * 2.0;
+        al = 0.30 + Math.random() * 0.45;
       } else {                               // 大星斑（少而醒目，虚实皆有）
-        sz = 4.2 + Math.random() * 6.0;
-        al = 0.35 + Math.random() * 0.45;
+        sz = 3.8 + Math.random() * 6.5;
+        al = 0.32 + Math.random() * 0.48;
       }
       arr.push(
         x, Math.random(),                        // 全屏随机位置（右侧偏密）
