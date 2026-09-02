@@ -75,6 +75,12 @@
     'void main(){',
     // 全身取景下的 NDC 位置
     '  vec2 posNDC = vec2((aPos.x - 0.5) * 2.0 * uKX + uOff.x, (0.5 - aPos.y) * 2.0 * uKY + uOff.y);',
+    // 猫身呼吸感：组成猫的粒子(非尘埃)在世界坐标做缓慢、小范围、有机的噪声漂浮——
+    //   加在镜头变换之前，故随变焦一致缩放(透视自然)；低频慢漂移(不抽搐、不单向、不破坏轮廓)，像呼吸/轻轻浮动。
+    '  float subj = 1.0 - aAmbient;',
+    '  vec2 bN = vec2(vnoise(aPos * 3.0 + vec2(uTime * 0.09, aSeed * 6.1)),',
+    '                 vnoise(aPos * 3.0 + vec2(aSeed * 4.3, uTime * 0.10)));',
+    '  posNDC += (bN - 0.5) * 2.0 * 0.012 * subj;',
     // 电影镜头（纯光学变焦，非平移）：以固定光心 uCamPivot 为中心缩放取景。
     //   uCamScale>1 镜头推近（取景框小，猫在画面右侧之外）；随滚轮 uCamScale→1 拉远，取景框扩大，
     //   原本在画面外的猫从右边缘“入镜”——内容不动、是镜头视野把它取进来，不是猫平移滑入。
@@ -98,8 +104,8 @@
     '  float rad = 0.6 + 1.8 * hash(aPos * vec2(97.3, 51.1) + aSeed);',
     '  vec2 scattered = pos + vec2(cos(ang), sin(ang)) * rad * (1.0 - aAmbient);',
     '  pos = mix(pos, scattered, uProgress);',
-    // 微运动：尘埃持续无序漂浮(幅度大)；主体小范围缓慢漂移(活着、不抽搐、不静止)
-    '  float mAmp = aAmbient * 0.10 + (1.0 - aAmbient) * 0.012;',
+    // 微运动：尘埃持续无序漂浮(屏幕空间、幅度大)；主体的呼吸漂浮已在世界坐标施加(随镜头缩放)，此处不再叠加
+    '  float mAmp = aAmbient * 0.10;',
     '  vec2 mN = vec2(vnoise(aPos * 5.0 + vec2(uTime * 0.12, aSeed * 9.0)),',
     '                 vnoise(aPos * 5.0 + vec2(aSeed * 5.0, uTime * 0.14)));',
     '  pos += (mN - 0.5) * 2.0 * mAmp;',
