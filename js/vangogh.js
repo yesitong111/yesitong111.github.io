@@ -127,7 +127,14 @@
     '  float parK = mix(0.35, 1.5, aAmbient) * (0.55 + aSeed * 0.9);',
     '  vec2 par = uView * parK;',
     '  vec2 finalPos = pos + push + par;',
+    // 水晶球闪粉：约 1/4 尘埃为“闪粉”，尖峰式明灭(pow 正弦→一闪一闪，像雪花球里被光打到的亮片)；猫主体不闪烁
     '  vGlint = 0.0;',
+    '  if (aAmbient > 0.5) {',
+    '    float glitterGate = step(0.74, hash(vec2(aSeed * 5.1 + 9.2, aSeed * 3.3)));',
+    '    float sp = 0.8 + aSeed * 1.6;',                                   // 每颗闪烁速度不同
+    '    float tw = 0.5 + 0.5 * sin(uTime * sp + aSeed * 60.0);',
+    '    vGlint = glitterGate * tw * tw * tw;',                           // pow3 尖峰：平时暗、偶发亮闪
+    '  }',
     // 变焦锐化：推近(zHard↑)时猫主体粒子整体变硬(内部锐利小点、轮廓完全实心)，避免柔光圆盘重叠糊墙——
     //   又小又锐的点即使密也清晰呈点绘/铜版画质感，五官(密毛 vs 眼鼻暗部空洞)可读；拉远 zHard→0 恢复原有虚实混合。尘埃(星点)不参与。
     '  float zHard = smoothstep(1.0, 2.6, uCamScale) * (1.0 - aAmbient);',
@@ -144,6 +151,8 @@
     '  float bigK = aAmbient * 1.2 + (1.0 - aAmbient) * mix(1.0, 0.45, zHard);',
     '  float big = bigGate * (0.6 + 1.8 * (0.5 + 0.5 * sin(uTime * 0.18 + aSeed * 40.0))) * bigK;',
     '  float size = baseSize + big;',
+    // 闪粉亮闪瞬间尺寸增大(亮片被光打到时更醒目)；猫不受影响
+    '  size *= 1.0 + vGlint * 0.9;',
     // 轮廓粒子沿剪影边缘小范围平滑流动：居中缓慢噪声漂移(不抽搐、不单向)，有流动感
     '  vec2 eN = vec2(vnoise(aPos * 2.5 + vec2(uTime * 0.06, aSeed * 7.0)),',
     '                 vnoise(aPos * 2.5 + vec2(aSeed * 7.0, uTime * 0.06)));',
@@ -168,7 +177,14 @@
     '  vec2 c = gl_PointCoord - vec2(0.5);',
     '  float d = length(c);',
     '  float inner = mix(0.06, 0.42, vHard);',
-    '  float a = smoothstep(0.5, inner, d) * min(1.0, vAlpha + vGlint * 0.35);',
+    '  float core = smoothstep(0.5, inner, d) * min(1.0, vAlpha + vGlint * 0.4);',
+    // 水晶球闪粉/星星发光：仅亮(白)粒子在闪烁(vGlint)时泛柔和光晕 + 细十字星芒；暗粒子不泛光(黑底不发脏)
+    '  float lum = (uColor.r + uColor.g + uColor.b) / 3.0;',
+    '  float glow = vGlint * lum;',
+    '  float halo = glow * exp(-d * d * 6.0) * 0.85;',                       // 柔光晕
+    '  float rays = glow * (exp(-abs(c.x) * 22.0) + exp(-abs(c.y) * 22.0))',
+    '             * exp(-d * 3.2) * 0.30;',                                  // 细十字星芒
+    '  float a = core + halo + rays;',
     '  if (a < 0.01) discard;',
     '  gl_FragColor = vec4(uColor, a);',
     '}'
@@ -326,7 +342,7 @@
 
   /* ---------------- 采样：图像 -> 点云（三层细节优化） ---------------- */
   function sampleLayer(layer, img) {
-    var sw = Math.min(img.width, 720);
+    var sw = Math.min(img.width, 880);
     var sh = Math.round(sw * img.height / img.width);
     var sc = document.createElement('canvas');
     sc.width = sw; sc.height = sh;
@@ -420,14 +436,14 @@
           w = (gray / 255) * (0.25 + 0.75 * tex);
           sz = (0.6 + w * 1.7 + Math.random() * 0.5) * (0.7 + Math.random() * 1.0); al = 0.4 + w * 0.6;
         } else if (layer.mode === 'lightCat') {
-          // 白粒子（黑底上，浅色猫）：眼睛/鼻子等“深暗五官”直接不落子→透出黑底，形成清晰的深色眼鼻“负形”；
-          //   亮毛处密集白点。这样近景放大时眼鼻=黑形、毛=白点，五官一眼可辨，而不是糊成白团。
-          if (gray < 80) continue;                           // 眼珠/鼻/嘴等极暗五官留空（负形），透出黑底；毛影不受影响
-          if (tex < 0.08) continue;                          // 平面无毛发纹理处稀疏
-          var bright = (gray - 80) / 175;                    // 越亮(白毛)越密
-          w = Math.min(1, bright * (0.40 + 0.60 * Math.min(1, tex / 0.5)));
-          if (w < 0.10) continue;
-          sz = (0.45 + w * 1.15 + Math.random() * 0.4) * (0.75 + Math.random() * 0.7); al = 0.55 + w * 0.45;
+          // 白粒子（黑底上，浅色猫）：白毛密集白点；眼/鼻/嘴等五官为“稀疏点绘的深色形”——
+          //   最深瞳孔(gray<55)近空透出黑底，中等暗的眼鼻区只落极少白点(呈深色但有纹理、不死黑、不糊)，
+          //   亮毛处密白。配合高分辨率采样(880)，近景五官由疏密对比清晰点出。
+          if (tex < 0.07) continue;                          // 平面无毛发纹理处稀疏
+          var bright = Math.max(0, (gray - 55) / 200);       // 0=最深瞳孔, 1=亮白毛
+          w = Math.min(1, (0.08 + 0.92 * bright) * (0.35 + 0.65 * Math.min(1, tex / 0.5)));
+          if (w < 0.05) continue;
+          sz = (0.42 + w * 1.1 + Math.random() * 0.4) * (0.7 + Math.random() * 0.7); al = 0.5 + w * 0.5;
         } else if (layer.mode === 'lightFlat') {
           // 白粒子（蒙版白区，版画亮部整块）
           if (gray <= 128) continue;
