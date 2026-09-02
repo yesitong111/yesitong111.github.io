@@ -131,10 +131,12 @@
     // 硬度：每颗粒子由种子决定 0~1（画面中有实有虚）；轮廓粒子偏硬以保持轮廓清晰；星点也偏实(星空锐利光点)
     '  float hRand = hash(vec2(aSeed * 7.31 + 3.7, aSeed * 2.13));',
     '  vHard = clamp(hRand + 0.20 + aEdge * 0.40, 0.0, 1.0);',
-    // 粒子大小：主体随镜头缩放，但用 pow(S,0.62) 让近景粒子远小于真实放大——点间留气隙呈细密点绘，
-    //   白粒子不叠成墙、脸部五官/毛发纹理清晰可辨；拉远(S→1)时收敛为正常大小。轮廓粒子仍偏大勾边。
-    '  float subjZoom = pow(uCamScale, 0.62);',
-    '  float subjScale = subjZoom * mix(1.0, 1.28, aEdge);',
+    // 粒子大小随变焦分两路：
+    //   轮廓点严格随变焦线性放大(edgeZoom=uCamScale)——与边缘间距同步，任何焦段都和全身时一样连成“细而锐”的实线勾边（不粗成糊带、也不断开）；
+    //   内部点 pow(S,0.55) 放大很慢——近景点远小于间距，留大量气隙呈通透点绘，白毛不叠成墙、五官可辨。
+    '  float subjZoomIn = pow(uCamScale, 0.55);',
+    '  float edgeZoom   = uCamScale;',
+    '  float subjScale = mix(subjZoomIn, edgeZoom * 1.02, aEdge);',
     '  float dSizeK = mix(1.0, uCamScale, dDepth);',
     '  float baseSize = aSize * (aAmbient * 1.4 * dSizeK + (1.0 - aAmbient) * subjScale);',
     // 少数粒子低频变大（大颗粒数量少、频率低）；慢(0.18rad/s)无闪烁
@@ -147,13 +149,13 @@
     '  vec2 eFlow = (eN - 0.5) * 2.0 * 0.022 * aEdge * (1.0 - aAmbient);',
     '  finalPos += eFlow;',
     // 变焦自适应细节：推近(uCamScale大)时主体“内部”粒子按固定随机比例平滑收小淡出，呈稀疏点绘——
-    //   近景脸不糊、五官/毛发由疏密点出；轮廓粒子(aEdge)与尘埃(aAmbient)不抽稀，外形始终清晰。
+    //   近景脸不糊、五官/毛发由疏密点出；轮廓(aEdge)严格线性放大保持细锐实线、不抽稀；尘埃(aAmbient)不抽稀，星空始终完整。
     //   拉远(uCamScale→1)时 zAmt→0，全部粒子恢复饱满，全身猫完整。
-    '  float zAmt = smoothstep(1.0, 3.2, uCamScale);',
+    '  float zAmt = smoothstep(1.0, 2.8, uCamScale);',
     '  float interior = (1.0 - aEdge) * (1.0 - aAmbient);',
-    '  float thinGate = step(hash(vec2(aSeed * 13.7 + 1.1, aSeed * 7.7)), 0.62);',
+    '  float thinGate = step(hash(vec2(aSeed * 13.7 + 1.1, aSeed * 7.7)), 0.70);',
     '  float thin = zAmt * interior * thinGate;',
-    '  float detailKeep = 1.0 - thin * 0.85;',
+    '  float detailKeep = 1.0 - thin * 0.88;',
     '  gl_Position = vec4(finalPos, 0.0, 1.0);',
     '  gl_PointSize = size * uPointSize * clip * detailKeep;',
     // 透明度：恒为粒子本色；轮廓粒子提亮(勾边更明显)；被抽稀的内部粒子同步淡出；出画部分由视口几何裁切（真实镜头硬边缘）
