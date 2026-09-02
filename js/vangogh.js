@@ -127,13 +127,7 @@
     '  float parK = mix(0.35, 1.5, aAmbient) * (0.55 + aSeed * 0.9);',
     '  vec2 par = uView * parK;',
     '  vec2 finalPos = pos + push + par;',
-    // 星空亮星：少数尘埃(约18%)为“亮星”，缓慢明灭闪烁(vGlint 0..1)，FSH 里加柔和光晕呈星星发光感；猫主体不发光
     '  vGlint = 0.0;',
-    '  if (aAmbient > 0.5) {',
-    '    float starGate = step(0.82, hash(vec2(aSeed * 5.1 + 9.2, aSeed * 3.3)));',
-    '    float tw = 0.5 + 0.5 * sin(uTime * (0.5 + aSeed * 1.1) + aSeed * 60.0);',
-    '    vGlint = starGate * tw * tw;',
-    '  }',
     // 变焦锐化：推近(zHard↑)时猫主体粒子整体变硬(内部锐利小点、轮廓完全实心)，避免柔光圆盘重叠糊墙——
     //   又小又锐的点即使密也清晰呈点绘/铜版画质感，五官(密毛 vs 眼鼻暗部空洞)可读；拉远 zHard→0 恢复原有虚实混合。尘埃(星点)不参与。
     '  float zHard = smoothstep(1.0, 2.6, uCamScale) * (1.0 - aAmbient);',
@@ -150,22 +144,16 @@
     '  float bigK = aAmbient * 1.2 + (1.0 - aAmbient) * mix(1.0, 0.45, zHard);',
     '  float big = bigGate * (0.6 + 1.8 * (0.5 + 0.5 * sin(uTime * 0.18 + aSeed * 40.0))) * bigK;',
     '  float size = baseSize + big;',
-    // 亮星放大发光：闪烁中的亮星尺寸略增(光晕更大)；猫不受影响
-    '  size *= 1.0 + vGlint * 0.5;',
-    // 流动感：轮廓粒子沿剪影边缘漂移(eFlow，较强)；主体内部粒子也做极缓慢小幅噪声漂移(iFlow)，像毛发/粒子在轻轻流动
+    // 轮廓粒子沿剪影边缘小范围平滑流动：居中缓慢噪声漂移(不抽搐、不单向)，有流动感
     '  vec2 eN = vec2(vnoise(aPos * 2.5 + vec2(uTime * 0.06, aSeed * 7.0)),',
     '                 vnoise(aPos * 2.5 + vec2(aSeed * 7.0, uTime * 0.06)));',
     '  vec2 eFlow = (eN - 0.5) * 2.0 * 0.022 * aEdge * (1.0 - aAmbient);',
-    '  vec2 iN = vec2(vnoise(aPos * 3.0 + vec2(uTime * 0.035, aSeed * 5.0)),',
-    '                 vnoise(aPos * 3.0 + vec2(aSeed * 5.0, uTime * 0.035)));',
-    '  vec2 iFlow = (iN - 0.5) * 2.0 * 0.012 * (1.0 - aEdge) * (1.0 - aAmbient);',
-    '  finalPos += eFlow + iFlow;',
+    '  finalPos += eFlow;',
     '  gl_Position = vec4(finalPos, 0.0, 1.0);',
     '  gl_PointSize = size * uPointSize * clip;',
-    // 呼吸感：猫主体透明度随时间缓慢起伏(相位按位置+seed错开，如整体在呼吸)，轮廓提亮勾边；尘埃不参与
-    '  float breath = 1.0 + 0.10 * sin(uTime * 0.55 + aPos.x * 6.0 + aPos.y * 4.0 + aSeed * 10.0) * (1.0 - aAmbient);',
+    // 透明度：恒为粒子本色；轮廓粒子提亮(勾边更明显)；出画部分由视口几何裁切（真实镜头硬边缘）
     '  float edgeGlow = mix(1.0, 1.45, aEdge * (1.0 - aAmbient));',
-    '  vAlpha = aAlpha * uAlphaScale * clip * edgeGlow * breath;',
+    '  vAlpha = aAlpha * uAlphaScale * clip * edgeGlow;',
     '}'
   ].join('\n');
 
@@ -180,11 +168,7 @@
     '  vec2 c = gl_PointCoord - vec2(0.5);',
     '  float d = length(c);',
     '  float inner = mix(0.06, 0.42, vHard);',
-    '  float core = smoothstep(0.5, inner, d) * min(1.0, vAlpha + vGlint * 0.35);',
-    // 星星发光：亮星(白色高亮度)随闪烁 vGlint 泛一圈柔和光晕(高斯衰减)，暗粒子不泛光(避免黑底发脏)
-    '  float lum = (uColor.r + uColor.g + uColor.b) / 3.0;',
-    '  float halo = vGlint * lum * exp(-d * d * 7.0) * 0.60;',
-    '  float a = core + halo;',
+    '  float a = smoothstep(0.5, inner, d) * min(1.0, vAlpha + vGlint * 0.35);',
     '  if (a < 0.01) discard;',
     '  gl_FragColor = vec4(uColor, a);',
     '}'
@@ -424,25 +408,26 @@
             al = 0.035 + body * 0.07;
           }
         } else if (layer.mode === 'dark') {
-          // 黑粒子（白底/亮侧上）：越暗越密；眼珠/鼻头等极暗处适度加密但不铺满(0.68)，避免死黑块、保留透气感
+          // 黑粒子（白底/亮侧上）：越暗越密；眼珠/鼻头等极暗处强制近实心，保证亮侧五官清晰；尺寸方差大
           var darkness = (150 - gray) / 150;
           if (darkness <= 0.02) continue;
           w = darkness * (0.45 + 0.55 * tex);
-          if (gray < 70) w = Math.max(w, 0.68);             // 极暗五官：较密但仍留气隙
-          sz = (0.5 + w * 1.5 + Math.random() * 0.45) * (0.7 + Math.random() * 0.9); al = 0.42 + w * 0.5;
+          if (gray < 70) w = Math.max(w, 0.92);             // 眼珠/鼻头等极暗五官：近实心黑点
+          sz = (0.5 + w * 1.5 + Math.random() * 0.45) * (0.7 + Math.random() * 0.9); al = 0.45 + w * 0.55;
         } else if (layer.mode === 'light') {
           // 白粒子（黑底上）：亮部×纹理；均匀浅底(背景)纹理≈0被剔除
           if (tex < 0.10) continue;
           w = (gray / 255) * (0.25 + 0.75 * tex);
           sz = (0.6 + w * 1.7 + Math.random() * 0.5) * (0.7 + Math.random() * 1.0); al = 0.4 + w * 0.6;
         } else if (layer.mode === 'lightCat') {
-          // 白粒子（黑底上，浅色猫）：白毛密集；暗部/眼鼻不再挖成死黑——只有极深瞳孔(gray<55)近空以显出眼神，
-          //   中等暗部铺一层稀疏白点柔和过渡(有呼吸/通透感、不堵死)；纹理越强越密。
-          if (tex < 0.06) continue;                          // 平面无毛发纹理处稀疏
-          var bright = Math.max(0, (gray - 55) / 200);       // 越亮越密；gray<=55(最深瞳孔)为0→近空
-          w = Math.min(1, (0.12 + 0.88 * bright) * (0.30 + 0.70 * Math.min(1, tex / 0.5)));
-          if (w < 0.06) continue;
-          sz = (0.45 + w * 1.2 + Math.random() * 0.45) * (0.75 + Math.random() * 0.75); al = 0.45 + w * 0.5;
+          // 白粒子（黑底上，浅色猫）：眼睛/鼻子等“深暗五官”直接不落子→透出黑底，形成清晰的深色眼鼻“负形”；
+          //   亮毛处密集白点。这样近景放大时眼鼻=黑形、毛=白点，五官一眼可辨，而不是糊成白团。
+          if (gray < 80) continue;                           // 眼珠/鼻/嘴等极暗五官留空（负形），透出黑底；毛影不受影响
+          if (tex < 0.08) continue;                          // 平面无毛发纹理处稀疏
+          var bright = (gray - 80) / 175;                    // 越亮(白毛)越密
+          w = Math.min(1, bright * (0.40 + 0.60 * Math.min(1, tex / 0.5)));
+          if (w < 0.10) continue;
+          sz = (0.45 + w * 1.15 + Math.random() * 0.4) * (0.75 + Math.random() * 0.7); al = 0.55 + w * 0.45;
         } else if (layer.mode === 'lightFlat') {
           // 白粒子（蒙版白区，版画亮部整块）
           if (gray <= 128) continue;
