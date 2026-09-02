@@ -131,11 +131,10 @@
     // 硬度：每颗粒子由种子决定 0~1（画面中有实有虚）；轮廓粒子偏硬以保持轮廓清晰；星点也偏实(星空锐利光点)
     '  float hRand = hash(vec2(aSeed * 7.31 + 3.7, aSeed * 2.13));',
     '  vHard = clamp(hRand + 0.20 + aEdge * 0.40, 0.0, 1.0);',
-    // 粒子大小：主体随镜头缩放——用 pow(S,0.92) 使特写时粒子略小于真实放大(猫更通透、白粒子不糊成墙)、拉远接近 S；
-    //   轮廓粒子额外放大(勾边更显眼)。尘埃：远景星空尺寸近乎恒定(满天星大小不变)、近景光斑随 S 缩放；
-    //   aSize 大颗粒与 big 脉冲始终存在，任意焦段画面里仍会冒出大粒子。
-    '  float subjZoom = pow(uCamScale, 0.92);',
-    '  float subjScale = subjZoom * mix(1.0, 1.30, aEdge);',
+    // 粒子大小：主体随镜头缩放，但用 pow(S,0.62) 让近景粒子远小于真实放大——点间留气隙呈细密点绘，
+    //   白粒子不叠成墙、脸部五官/毛发纹理清晰可辨；拉远(S→1)时收敛为正常大小。轮廓粒子仍偏大勾边。
+    '  float subjZoom = pow(uCamScale, 0.62);',
+    '  float subjScale = subjZoom * mix(1.0, 1.28, aEdge);',
     '  float dSizeK = mix(1.0, uCamScale, dDepth);',
     '  float baseSize = aSize * (aAmbient * 1.4 * dSizeK + (1.0 - aAmbient) * subjScale);',
     // 少数粒子低频变大（大颗粒数量少、频率低）；慢(0.18rad/s)无闪烁
@@ -417,11 +416,13 @@
           w = (gray / 255) * (0.25 + 0.75 * tex);
           sz = (0.6 + w * 1.7 + Math.random() * 0.5) * (0.7 + Math.random() * 1.0); al = 0.4 + w * 0.6;
         } else if (layer.mode === 'lightCat') {
-          // 白粒子（黑底上，深色主体）：靠毛发纹理负像，淡化对亮度的依赖（勾勒轮廓/毛发）；尺寸方差大
-          if (tex < 0.05) continue;
-          var lw = (gray / 255) * 0.55 + 0.45;
-          w = lw * (0.2 + 0.8 * tex);
-          sz = (0.55 + w * 1.5 + Math.random() * 0.5) * (0.7 + Math.random() * 1.1); al = 0.45 + w * 0.55;
+          // 白粒子（黑底上，深色猫）：只在亮毛/强毛发纹理处落子；眼鼻等暗部(低灰度)与平面区域自然稀疏留空——
+          //   五官靠"亮毛密、五官暗部稀"的点绘疏密关系呈现，近景放大也不糊
+          if (tex < 0.12) continue;
+          var texK = Math.min(1, (tex - 0.12) / 0.45);   // 纹理越强越密
+          var lw = (gray / 255) * 0.75 + 0.10;           // 亮毛密、暗部(眼鼻)极稀
+          w = lw * (0.15 + 0.85 * texK);
+          sz = (0.5 + w * 1.3 + Math.random() * 0.45) * (0.75 + Math.random() * 0.9); al = 0.5 + w * 0.5;
         } else if (layer.mode === 'lightFlat') {
           // 白粒子（蒙版白区，版画亮部整块）
           if (gray <= 128) continue;
