@@ -15,45 +15,37 @@
   pointer-events: none;
 }
 
-/* 让导航/文字浮在 canvas 之上 */
-#page-header.full_page nav,
+/* 让导航/文字浮在 canvas 之上（不改变主题定位，仅提升层级） */
+#page-header.full_page nav {
+  z-index: 3;
+}
 #page-header.full_page #site-info,
 #page-header.full_page #scroll-down {
-  position: relative;
   z-index: 2;
 }
 
-/* 中央标题：随画面流动的渐变变色（流光文字） */
+/* 中央标题：英文 + 猫页 Zaizai 风格（Georgia 衬线斜体，纯白优雅），不再用发淡的渐变 */
 #page-header.full_page #site-title {
-  background: linear-gradient(
-    100deg,
-    #f5f5f5 0%,
-    #cfd2d8 22%,
-    #ffffff 40%,
-    #9a9da6 58%,
-    #f2f2f4 78%,
-    #d8dbe2 100%
-  );
-  background-size: 260% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: transparent;
-  animation: pawFlow 7s ease-in-out infinite;
-  text-shadow: none;
-  filter: drop-shadow(0 2px 18px rgba(255, 255, 255, 0.25));
-}
-
-@keyframes pawFlow {
-  0%   { background-position: 0% 50%; }
-  50%  { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
+  font-family: Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-weight: 400;
+  font-size: clamp(3rem, 9vw, 7rem);
+  line-height: 1.05;
+  letter-spacing: 0.01em;
+  color: #ffffff;
+  background: none;
+  -webkit-background-clip: border-box;
+  background-clip: border-box;
+  -webkit-text-fill-color: #ffffff;
+  animation: none;
+  text-shadow: 0 2px 34px rgba(0, 0, 0, 0.6), 0 0 2px rgba(255, 255, 255, 0.35);
 }
 
 #page-header.full_page #site-subtitle,
 #page-header.full_page #subtitle {
-  color: rgba(235, 236, 240, 0.86);
-  text-shadow: 0 1px 14px rgba(0, 0, 0, 0.5);
+  font-family: Georgia, "Times New Roman", serif;
+  color: rgba(240, 240, 244, 0.9);
+  text-shadow: 0 1px 16px rgba(0, 0, 0, 0.6);
 }
 
 #page-header.full_page #scroll-down i {

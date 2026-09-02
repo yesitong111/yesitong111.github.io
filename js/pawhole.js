@@ -15,6 +15,10 @@
     canvas.className = 'pawhole-canvas';
     header.insertBefore(canvas, header.firstChild);
 
+    // 封面大字改为英文（仅首页封面，不动导航站点名/站点配置）
+    var titleEl = document.getElementById('site-title');
+    if (titleEl) titleEl.textContent = 'My Blog';
+
     var gl = canvas.getContext('webgl', { alpha: false, antialias: false }) ||
              canvas.getContext('experimental-webgl', { alpha: false });
     if (!gl) return;
@@ -39,21 +43,30 @@
       '}',
       'float fbm(vec2 p){ float v=0.0, a=0.5; for(int i=0;i<4;i++){ v+=a*noise(p); p*=2.03; a*=0.5; } return v; }',
 
-      // 椭圆高斯团（用于拼成猫爪：一个大掌垫 + 四个趾垫）
-      'float blob(vec2 p, vec2 c, vec2 r){ vec2 q = (p-c)/r; return exp(-dot(q,q)*2.6); }',
+      // 平滑并集（让多个椭圆合并成一个连贯剪影）
+      'float smin(float a, float b, float k){',
+      '  float h = clamp(0.5 + 0.5*(b - a)/k, 0.0, 1.0);',
+      '  return mix(b, a, h) - k*h*(1.0 - h);',
+      '}',
+      // 椭圆的近似有向距离（内负外正）
+      'float ellipseSDF(vec2 p, vec2 c, vec2 r){',
+      '  vec2 q = abs((p - c) / r);',
+      '  float o = length(max(q - 1.0, 0.0));',
+      '  float i = min(max(q.x - 1.0, q.y - 1.0), 0.0);',
+      '  return (o + i) * min(r.x, r.y);',
+      '}',
 
-      // 猫爪力场 F（越大越靠近内部），位置经水波域扭曲→边缘流动
-      'float pawField(vec2 p){',
+      // 猫爪 SDF：一个大掌垫 + 四个趾垫，用 smin 平滑并成“一个”连贯猫爪；域扭曲让边缘如水波流动
+      'float pawSDF(vec2 p){',
       '  vec2 w = p;',
-      '  w += vec2(fbm(p*2.2 + vec2(uTime*0.10, 0.0)), fbm(p*2.2 + vec2(0.0, uTime*0.12))) * 0.05;',
-      '  w += vec2(noise(p*5.0 - uTime*0.18), noise(p*5.0 + uTime*0.15)) * 0.02;',
-      '  float f = 0.0;',
-      '  f += blob(w, vec2(0.0, -0.16), vec2(0.40, 0.34));  // 大掌垫',
-      '  f += blob(w, vec2(-0.285, 0.26), vec2(0.145, 0.165)); // 趾垫 外',
-      '  f += blob(w, vec2( 0.285, 0.26), vec2(0.145, 0.165));',
-      '  f += blob(w, vec2(-0.095, 0.40), vec2(0.125, 0.145)); // 趾垫 内',
-      '  f += blob(w, vec2( 0.095, 0.40), vec2(0.125, 0.145));',
-      '  return f;',
+      '  w += vec2(fbm(p*2.0 + vec2(uTime*0.08, 0.0)), fbm(p*2.0 + vec2(0.0, uTime*0.09))) * 0.028;',
+      '  w += vec2(noise(p*4.5 - uTime*0.12), noise(p*4.5 + uTime*0.10)) * 0.012;',
+      '  float d = ellipseSDF(w, vec2(0.0, -0.24), vec2(0.47, 0.40));   // 大掌垫',
+      '  d = smin(d, ellipseSDF(w, vec2(-0.335, 0.19), vec2(0.185, 0.215)), 0.16); // 外趾',
+      '  d = smin(d, ellipseSDF(w, vec2( 0.335, 0.19), vec2(0.185, 0.215)), 0.16);',
+      '  d = smin(d, ellipseSDF(w, vec2(-0.115, 0.35), vec2(0.155, 0.19)), 0.16);  // 内趾',
+      '  d = smin(d, ellipseSDF(w, vec2( 0.115, 0.35), vec2(0.155, 0.19)), 0.16);',
+      '  return d;',
       '}',
 
       'void main(){',
@@ -63,33 +76,31 @@
       // 鼠标延迟视差：黑洞轻微跟随，背景反向轻移（层次）
       '  vec2 m = uMouse;',
       '  vec2 pc = p - m * 0.06;',
-      '  vec2 pp = pc * 0.66;',   // 收缩场坐标→放大猫爪，使其成为画面主体
-      '  float F = pawField(pp);',
+      '  vec2 pp = pc * 0.72;',   // 收缩场坐标→放大猫爪，使其成为画面主体
+      '  float d = pawSDF(pp);',
 
-      // 背景：左亮右暗的柔和银灰渐变 + 暗角 + 颗粒（黑白调）
-      '  float grad = 1.0 - smoothstep(-0.55, 1.15, p.x + m.x*0.10);',
-      '  float bg = mix(0.10, 0.82, grad);',
+      // 背景：左亮右暗的柔和银灰渐变 + 爪心周围柔光 + 暗角 + 颗粒（黑白调）
+      '  float grad = 1.0 - smoothstep(-0.6, 1.2, p.x + m.x*0.10);',
+      '  float bg = mix(0.10, 0.80, grad);',
+      '  float r0 = length(pp - vec2(0.0, -0.02));',
+      '  bg += 0.18 * exp(-r0 * 1.6);',                                   // 爪周柔光
       '  float vig = 1.0 - smoothstep(0.35, 1.9, length(p*vec2(0.72, 0.95)));',
-      '  bg *= 0.55 + 0.45 * vig;',
-      '  bg += (hash(uv*vec2(uAspect*900.0, 700.0)) - 0.5) * 0.05;',
+      '  bg *= 0.6 + 0.4 * vig;',
+      '  bg += (hash(uv*vec2(uAspect*900.0, 700.0)) - 0.5) * 0.045;',
 
-      // 黑洞内部
-      '  float hole = smoothstep(0.55, 0.72, F);',
+      // 黑洞内部（d<0）：纯黑
+      '  float hole = 1.0 - smoothstep(-0.04, 0.035, d);',
 
-      // 边缘流动亮边（极光感）：F 附近的亮带，随噪声流动明暗
-      '  float rimBand = exp(-pow((F - 0.52) * 6.0, 2.0));',
-      '  float flow = 0.6 + 0.4 * fbm(pc*3.0 + vec2(uTime*0.25, -uTime*0.2));',
-      '  float rim = rimBand * flow;',
+      // 贴边亮环（极光/光晕）：沿着猫爪轮廓的一圈柔亮带，随边缘流动
+      '  float edge = exp(-max(d, 0.0) * 3.4) * smoothstep(-0.25, 0.06, d);',
 
-      // 涟漪：从爪心向外一圈圈荡出，集中在边缘外侧、随距离衰减（用缩放坐标与爪同心）
-      '  float r0 = length(pp - vec2(0.0, 0.02));',
-      '  float rings = 0.5 + 0.5 * sin(r0 * 14.0 - uTime * 2.2);',
-      '  float ringEnv = (1.0 - smoothstep(0.45, 0.78, F)) * (1.0 - smoothstep(0.5, 1.6, r0));',
-      '  float ripple = rings * ringEnv * 0.30;',
+      // 涟漪：贴着猫爪轮廓、向外荡漾的同心波纹（沿法向传播），近处强、远处衰减
+      '  float wave = sin(max(d, 0.0) * 11.0 - uTime * 2.1);',
+      '  float rEnv = smoothstep(0.0, 0.07, d) * exp(-max(d, 0.0) * 2.0);',
+      '  float ripple = wave * rEnv * 0.22;',
 
-      // 合成：背景 + 涟漪极光，再压入黑洞
-      '  float col = bg;',
-      '  col += rim * 0.55 + ripple;',
+      // 合成：背景 + 柔光 + 亮边 + 涟漪（明暗相间波纹），再压入黑洞
+      '  float col = bg + edge * 0.55 + ripple;',
       '  col = mix(col, 0.0, hole);',
       '  col = clamp(col, 0.0, 1.0);',
       '  gl_FragColor = vec4(vec3(col), 1.0);',
