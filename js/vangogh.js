@@ -146,11 +146,19 @@
     '                 vnoise(aPos * 2.5 + vec2(aSeed * 7.0, uTime * 0.06)));',
     '  vec2 eFlow = (eN - 0.5) * 2.0 * 0.022 * aEdge * (1.0 - aAmbient);',
     '  finalPos += eFlow;',
+    // 变焦自适应细节：推近(uCamScale大)时主体“内部”粒子按固定随机比例平滑收小淡出，呈稀疏点绘——
+    //   近景脸不糊、五官/毛发由疏密点出；轮廓粒子(aEdge)与尘埃(aAmbient)不抽稀，外形始终清晰。
+    //   拉远(uCamScale→1)时 zAmt→0，全部粒子恢复饱满，全身猫完整。
+    '  float zAmt = smoothstep(1.0, 3.2, uCamScale);',
+    '  float interior = (1.0 - aEdge) * (1.0 - aAmbient);',
+    '  float thinGate = step(hash(vec2(aSeed * 13.7 + 1.1, aSeed * 7.7)), 0.62);',
+    '  float thin = zAmt * interior * thinGate;',
+    '  float detailKeep = 1.0 - thin * 0.85;',
     '  gl_Position = vec4(finalPos, 0.0, 1.0);',
-    '  gl_PointSize = size * uPointSize * clip;',
-    // 透明度：恒为粒子本色；轮廓粒子提亮(勾边更明显)；出画部分由视口几何裁切（真实镜头硬边缘）
+    '  gl_PointSize = size * uPointSize * clip * detailKeep;',
+    // 透明度：恒为粒子本色；轮廓粒子提亮(勾边更明显)；被抽稀的内部粒子同步淡出；出画部分由视口几何裁切（真实镜头硬边缘）
     '  float edgeGlow = mix(1.0, 1.45, aEdge * (1.0 - aAmbient));',
-    '  vAlpha = aAlpha * uAlphaScale * clip * edgeGlow;',
+    '  vAlpha = aAlpha * uAlphaScale * clip * edgeGlow * detailKeep;',
     '}'
   ].join('\n');
 
