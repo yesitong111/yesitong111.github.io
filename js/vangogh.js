@@ -88,16 +88,24 @@
     '  vec2 base = uCamPivot + (posNDC - uCamPivot) * uCamScale;',
     // 左右裁剪（vangogh 章节用；电影模式主体全开 = -2..2）。尘埃恒全屏(freePos)，不参与猫形裁剪
     '  float clip = mix(step(uClipL, base.x) * step(base.x, uClipR), 1.0, aAmbient);',
-    // 尘埃/散落锚点：全屏随机
-    '  vec2 anchor = vec2(hash(vec2(aSeed, 1.7)) * 2.0 - 1.0, hash(vec2(aSeed, 3.1)) * 2.0 - 1.0);',
+    // 尘埃锚点：世界坐标铺满一个较大范围(约 -2.2..2.2)，供变焦时近景粒子从画外涌入
+    '  vec2 anchor = vec2(hash(vec2(aSeed, 1.7)) * 4.4 - 2.2, hash(vec2(aSeed, 3.1)) * 4.4 - 2.2);',
     // 电影镜头叙事（纯光学变焦）：猫恒处于猫形 base（光心固定、仅缩放），开场镜头推近(uCamScale大)时猫在画面右侧之外；
     // 随滚轮拉远(uCamScale→1)取景框扩大，猫被“取入”画面从右边缘入镜——内容不移动、不滑入、不飞入拼凑。
-    // 尘埃：噪声流场驱动，全屏无序漂浮（非单向），速度各异
+    // 尘埃同样纳入镜头世界：每颗粒子有随机深度 dDepth(0远→1近)。
+    //   远景(depth≈0)以画面中心为锚投影——始终铺满全屏，随变焦近大远小/由疏到密；
+    //   近景(depth≈1)以猫镜头光心 uCamPivot 为锚投影——推近时像猫一样被放大推到画外(大光斑)、拉远时从边缘涌入画面，形成景深视差。
+    '  float dDepth = hash(vec2(aSeed, 5.9));',
+    '  float kFar = 1.0 + 0.35 * (uCamScale - 1.0);',    // 远景对变焦的温和响应(也近大远小/由疏到密，但比近景弱)
+    '  float posK = mix(kFar, uCamScale, dDepth);',       // 位置随变焦的响应强度：远景温和、近景=S(与猫一致)
+    '  vec2 dPivot = mix(vec2(0.0), uCamPivot, dDepth);', // 远景绕画面中心、近景绕猫镜头光心
+    '  vec2 dBase = dPivot + (anchor - dPivot) * posK;',
+    // 噪声流场驱动的无序漂浮（非单向、速度各异），作为空气运动温和叠加在世界投影位上
     '  float spd = 0.05 + aSeed * 0.14;',
     '  vec2 f1 = vec2(vnoise(anchor * 2.2 + vec2(uTime * spd, 0.0)), vnoise(anchor * 2.2 + vec2(0.0, uTime * spd)));',
     '  vec2 wander = (f1 - 0.5) * 1.6;',
-    '  vec2 freePos = anchor + wander;',
-    // 尘埃走自由漂浮位(屏幕空间)；主体恒走猫形位(镜头缩放)，出画者由取景框/视口自然裁切
+    '  vec2 freePos = dBase + wander * 0.8;',
+    // 尘埃走世界投影位(随变焦近大远小/景深涌入)；主体恒走猫形位(镜头缩放)，出画者由取景框/视口自然裁切
     '  vec2 pos = mix(base, freePos, aAmbient);',
     // 章节散射（vangogh模式滚动散开，绕原位）
     '  float r = hash(aPos * vec2(143.7, 211.3) + aSeed);',
@@ -122,14 +130,15 @@
     // 硬度：每颗粒子由种子决定 0~1（画面中有实有虚）；轮廓粒子偏硬以保持轮廓清晰；猫身比尘埃略硬一点
     '  float hRand = hash(vec2(aSeed * 7.31 + 3.7, aSeed * 2.13));',
     '  vHard = clamp(hRand + 0.15 + aEdge * 0.35 - aAmbient * 0.10, 0.0, 1.0);',
-    // 粒子大小：尘埃与主体都随电影镜头变焦缩放——推近(uCamScale大)时粒子大、拉远到全身(uCamScale→1)变小；
-    //   尘埃处于背景层，缩放略作阻尼(0.7)以显得更远、更自然和谐，且画面始终保留低频大颗粒(不是全变小)。
+    // 粒子大小：主体随镜头真实缩放——推近(uCamScale大)特写粒子大、拉远到全身变小，轮廓粒子略大。
+    //   尘埃同样随变焦近大远小：近景(depth1)按 S 缩放(推近成大光斑、拉远变小变密)，远景(depth0)温和缩放；
+    //   无论远近，aSize 里的大颗粒与 big 脉冲始终存在(画面里仍会冒出大粒子)，并非全部变小。
     '  float subjScale = uCamScale * mix(1.0, 1.15, aEdge);',
-    '  float dustScale = mix(1.0, uCamScale, 0.7);',
-    '  float baseSize = aSize * (aAmbient * 1.4 * dustScale + (1.0 - aAmbient) * subjScale);',
-    // 少数粒子低频变大（大颗粒数量少、频率低）；慢(0.18rad/s)无闪烁；大颗粒同样随镜头缩放(背景始终有大粒子)
+    '  float dSizeK = mix(kFar, uCamScale, dDepth);',
+    '  float baseSize = aSize * (aAmbient * 1.4 * dSizeK + (1.0 - aAmbient) * subjScale);',
+    // 少数粒子低频变大（大颗粒数量少、频率低）；慢(0.18rad/s)无闪烁
     '  float bigGate = step(0.95, hash(vec2(aSeed, 3.3)));',
-    '  float big = bigGate * (0.6 + 1.8 * (0.5 + 0.5 * sin(uTime * 0.18 + aSeed * 40.0))) * (aAmbient * 1.2 * dustScale + (1.0 - aAmbient));',
+    '  float big = bigGate * (0.6 + 1.8 * (0.5 + 0.5 * sin(uTime * 0.18 + aSeed * 40.0))) * (aAmbient * 1.2 + (1.0 - aAmbient));',
     '  float size = baseSize + big;',
     // 轮廓粒子沿剪影边缘小范围平滑流动：居中缓慢噪声漂移(不抽搐、不单向)，有流动感
     '  vec2 eN = vec2(vnoise(aPos * 2.5 + vec2(uTime * 0.06, aSeed * 7.0)),',
