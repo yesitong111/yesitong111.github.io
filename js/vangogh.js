@@ -123,13 +123,14 @@
     '  float len = max(length(delta), 0.0001);',
     '  float fo = 1.0 - clamp(len / uMouseRadius, 0.0, 1.0);',
     '  vec2 push = (delta / len) * (fo * fo * uMouseStrength);',
-    // 相机视差：鼠标移动=摄影机偏移，近处粒子位移大（原网页交互方式）
-    '  vec2 par = uView * (0.25 + aSeed * 0.75);',
+    // 相机视差：鼠标移动=摄影机偏移，前景/近景粒子位移大(跟手强)，猫主体轻微跟随(更稳)
+    '  float parK = mix(0.35, 1.5, aAmbient) * (0.55 + aSeed * 0.9);',
+    '  vec2 par = uView * parK;',
     '  vec2 finalPos = pos + push + par;',
     '  vGlint = 0.0;',
-    // 硬度：每颗粒子由种子决定 0~1（画面中有实有虚）；轮廓粒子偏硬以保持轮廓清晰；猫身比尘埃略硬一点
+    // 硬度：每颗粒子由种子决定 0~1（画面中有实有虚）；轮廓粒子偏硬以保持轮廓清晰；星点也偏实(星空锐利光点)
     '  float hRand = hash(vec2(aSeed * 7.31 + 3.7, aSeed * 2.13));',
-    '  vHard = clamp(hRand + 0.15 + aEdge * 0.35 - aAmbient * 0.10, 0.0, 1.0);',
+    '  vHard = clamp(hRand + 0.20 + aEdge * 0.40, 0.0, 1.0);',
     // 粒子大小：主体随镜头真实缩放——推近(uCamScale大)特写粒子大、拉远到全身变小，轮廓粒子略大。
     //   尘埃同样随变焦近大远小：近景(depth1)按 S 缩放(推近成大光斑、拉远变小变密)，远景(depth0)温和缩放；
     //   无论远近，aSize 里的大颗粒与 big 脉冲始终存在(画面里仍会冒出大粒子)，并非全部变小。
@@ -237,6 +238,7 @@
   var W = 0, H = 0, DPR = 1;
   var mouse = { x: 0, y: 0, strength: 0, target: 0 };
   var view = { x: 0, y: 0 };                 // 相机视差（平滑跟随鼠标）
+  var viewA = { x: 0, y: 0 };                // 视差第一级缓冲（延迟惯性）
   var progress = 0, targetProgress = 0;
   var time = 0;
 
@@ -386,17 +388,21 @@
         if (data[p * 4 + 3] < 128) continue;
         var gray = luma[p];
         var tex = Math.min(1, Math.abs(gray - base[p]) / 45);
-        var w = 0, sz, al, edgeFlag = 0;
+        var isEdge = edgeMask[p];          // 剪影轮廓（所有层通用）：近景特写时清晰勾勒外形
+        var w = 0, sz, al, edgeFlag = isEdge ? 1 : 0;
         if (layer.mode === 'ghost') {
-          // 幽灵轮廓：大模糊身体掩膜 → 稀疏、大粒、低透明的模糊虚影；
-          // 叠加剪影边缘粒子（抠图轮廓），清晰勾勒猫的外形（特写阶段轮廓先明显），且沿边缘小范围流动
+          // 幽灵轮廓：身体=稀疏、大粒、低透明的模糊虚影；剪影边缘=小而密、亮而实的清晰描边
+          //   （近景放大后轮廓线依然锐利可辨，不再因大软半透粒子糊成一片）
           var body = Math.max(0, 1 - baseBig[p] / 200);
-          var isEdge = edgeMask[p];
-          if (body < 0.15 && !isEdge) continue;
-          edgeFlag = isEdge;
-          w = body * 0.5 + isEdge * 0.95;
-          sz = (2.0 + Math.random() * 2.4) * (1.0 - isEdge * 0.10) * (0.8 + isEdge * 0.5);
-          al = 0.05 + body * 0.10 + isEdge * 0.34;
+          if (body < 0.12 && !isEdge) continue;
+          w = body * 0.42 + isEdge * 1.0;
+          if (isEdge) {
+            sz = 0.85 + Math.random() * 0.95;          // 轮廓：小实点，勾线
+            al = 0.60 + Math.random() * 0.28;          // 轮廓：亮而实（该提亮处提亮）
+          } else {
+            sz = 2.2 + Math.random() * 2.6;            // 身体虚影：大而软淡
+            al = 0.05 + body * 0.09;
+          }
         } else if (layer.mode === 'dark') {
           // 黑粒子（白底上）：越暗越密，纹理处更实；尺寸方差大（组成猫的粒子有大有小）
           var darkness = (150 - gray) / 150;
@@ -423,6 +429,12 @@
           if (gray <= 128) continue;
           w = 1;
           sz = 0.6 + w * 1.7 + Math.random() * 0.5; al = 0.4 + w * 0.6;
+        }
+        // 主体毛发层的剪影轮廓：更密、更亮、点更锐（近景特写时外形清晰可辨，不只是粒子数量多）
+        if (isEdge && layer.mode !== 'ghost' && layer.mode !== 'lightFlat') {
+          w = Math.min(1, w + 0.55);
+          al = Math.min(1, al + 0.25);
+          sz = sz * 0.78 + 0.42;
         }
         // 密度分级
         if (Math.random() > w) continue;
@@ -453,13 +465,22 @@
       var x = Math.random();
       // 右侧密度偏置：越靠右保留概率越高（左~45% → 右~100%），画面右侧更密集
       if (Math.random() > 0.45 + 0.55 * x) continue;
-      // 大小不一、整体偏大：多数中粒，约1/6为明显大颗粒（最大的更大，参考图2的大圆斑）
-      var sz = 1.2 + Math.random() * 2.4;
-      if (Math.random() < 0.16) sz += 3.5 + Math.random() * 5.5;
+      // 星空式星等分层：多数细小星点 + 少数中等星 + 极少数醒目大星斑；透明度也分层(有虚有实)，大小对比强、疏密有致
+      var r = Math.random(), sz, al;
+      if (r < 0.58) {                        // 细小星点（最密）
+        sz = 0.45 + Math.random() * 1.05;
+        al = 0.22 + Math.random() * 0.45;
+      } else if (r < 0.90) {                 // 中等星点
+        sz = 1.7 + Math.random() * 2.1;
+        al = 0.30 + Math.random() * 0.42;
+      } else {                               // 大星斑（少而醒目，虚实皆有）
+        sz = 4.2 + Math.random() * 6.0;
+        al = 0.35 + Math.random() * 0.45;
+      }
       arr.push(
         x, Math.random(),                        // 全屏随机位置（右侧偏密）
-        sz,                                      // 大小不一、整体偏大（含明显大颗粒）
-        0.32 + Math.random() * 0.45,             // alpha 偏高、更可见
+        sz,                                      // 星等分层：小星点 / 中星 / 大星斑
+        al,                                      // 透明度分层：有虚有实
         Math.random(),
         1,                                       // ambient=1（永不聚合）
         0                                        // edge=0
@@ -640,10 +661,13 @@
     }
 
     // 相机视差：电影模式下鼠标移动=摄影机偏移（画面随鼠标同向轻移）
+    //   幅度更大、双级平滑(目标→缓冲→镜头)产生明显的延迟惯性/拖尾感，像手持摄影机缓缓跟上。
     var vx = 0, vy = 0;
-    if (CINEMATIC && mouse.target > 0) { vx = mouse.x * 0.05; vy = mouse.y * 0.035; }
-    view.x += (vx - view.x) * 0.04;
-    view.y += (vy - view.y) * 0.04;
+    if (CINEMATIC && mouse.target > 0) { vx = mouse.x * 0.12; vy = mouse.y * 0.09; }
+    viewA.x += (vx - viewA.x) * 0.055;   // 第一级：目标点先缓慢逼近
+    viewA.y += (vy - viewA.y) * 0.055;
+    view.x += (viewA.x - view.x) * 0.06; // 第二级：镜头再带惯性追上（拖尾）
+    view.y += (viewA.y - view.y) * 0.06;
 
     drawBg(contrast, edge);
 
