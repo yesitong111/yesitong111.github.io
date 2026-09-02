@@ -122,12 +122,14 @@
     // 硬度：每颗粒子由种子决定 0~1（画面中有实有虚）；轮廓粒子偏硬以保持轮廓清晰；猫身比尘埃略硬一点
     '  float hRand = hash(vec2(aSeed * 7.31 + 3.7, aSeed * 2.13));',
     '  vHard = clamp(hRand + 0.15 + aEdge * 0.35 - aAmbient * 0.10, 0.0, 1.0);',
-    // 粒子大小：尘埃屏幕空间常显(偏大)；主体随镜头真实缩放——推近(uCamScale大)特写粒子大、拉远到全身变小，轮廓粒子略大
+    // 粒子大小：尘埃与主体都随电影镜头变焦缩放——推近(uCamScale大)时粒子大、拉远到全身(uCamScale→1)变小；
+    //   尘埃处于背景层，缩放略作阻尼(0.7)以显得更远、更自然和谐，且画面始终保留低频大颗粒(不是全变小)。
     '  float subjScale = uCamScale * mix(1.0, 1.15, aEdge);',
-    '  float baseSize = aSize * (aAmbient * 1.4 + (1.0 - aAmbient) * subjScale);',
-    // 少数粒子低频变大（大颗粒数量少、频率低）；慢(0.18rad/s)无闪烁
+    '  float dustScale = mix(1.0, uCamScale, 0.7);',
+    '  float baseSize = aSize * (aAmbient * 1.4 * dustScale + (1.0 - aAmbient) * subjScale);',
+    // 少数粒子低频变大（大颗粒数量少、频率低）；慢(0.18rad/s)无闪烁；大颗粒同样随镜头缩放(背景始终有大粒子)
     '  float bigGate = step(0.95, hash(vec2(aSeed, 3.3)));',
-    '  float big = bigGate * (0.6 + 1.8 * (0.5 + 0.5 * sin(uTime * 0.18 + aSeed * 40.0))) * (aAmbient * 1.2 + (1.0 - aAmbient));',
+    '  float big = bigGate * (0.6 + 1.8 * (0.5 + 0.5 * sin(uTime * 0.18 + aSeed * 40.0))) * (aAmbient * 1.2 * dustScale + (1.0 - aAmbient));',
     '  float size = baseSize + big;',
     // 轮廓粒子沿剪影边缘小范围平滑流动：居中缓慢噪声漂移(不抽搐、不单向)，有流动感
     '  vec2 eN = vec2(vnoise(aPos * 2.5 + vec2(uTime * 0.06, aSeed * 7.0)),',
