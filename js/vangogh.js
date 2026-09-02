@@ -128,39 +128,32 @@
     '  vec2 par = uView * parK;',
     '  vec2 finalPos = pos + push + par;',
     '  vGlint = 0.0;',
-    // 硬度：每颗粒子由种子决定 0~1（画面中有实有虚）；轮廓粒子偏硬以保持轮廓清晰；星点也偏实(星空锐利光点)
+    // 变焦锐化：推近(zHard↑)时猫主体粒子整体变硬(内部锐利小点、轮廓完全实心)，避免柔光圆盘重叠糊墙——
+    //   又小又锐的点即使密也清晰呈点绘/铜版画质感，五官(密毛 vs 眼鼻暗部空洞)可读；拉远 zHard→0 恢复原有虚实混合。尘埃(星点)不参与。
+    '  float zHard = smoothstep(1.0, 2.6, uCamScale) * (1.0 - aAmbient);',
+    // 硬度：每颗粒子由种子决定 0~1（画面中有实有虚）；轮廓粒子偏硬；近景再整体加硬（内部锐利点绘、轮廓全实心）
     '  float hRand = hash(vec2(aSeed * 7.31 + 3.7, aSeed * 2.13));',
-    '  vHard = clamp(hRand + 0.20 + aEdge * 0.40, 0.0, 1.0);',
-    // 粒子大小随变焦分两路：
-    //   轮廓点严格随变焦线性放大(edgeZoom=uCamScale)——与边缘间距同步，任何焦段都和全身时一样连成“细而锐”的实线勾边（不粗成糊带、也不断开）；
-    //   内部点 pow(S,0.55) 放大很慢——近景点远小于间距，留大量气隙呈通透点绘，白毛不叠成墙、五官可辨。
-    '  float subjZoomIn = pow(uCamScale, 0.55);',
-    '  float edgeZoom   = uCamScale;',
-    '  float subjScale = mix(subjZoomIn, edgeZoom * 1.02, aEdge);',
+    '  vHard = clamp(hRand + 0.20 + aEdge * 0.40 + zHard * (0.30 + 0.35 * aEdge), 0.0, 1.0);',
+    // 粒子大小：主体随变焦“线性”放大(subjScale=uCamScale)——点径与点间距同步，近景点刚好相接呈连续点绘(不松脱、也不软叠成墙)；
+    //   配合近景 zHard 加硬，又密也是清晰铜版点绘；轮廓点略粗(+2%)勾边。尘埃(dust)另走景深缩放。
+    '  float subjScale = uCamScale * (1.0 + 0.02 * aEdge);',
     '  float dSizeK = mix(1.0, uCamScale, dDepth);',
     '  float baseSize = aSize * (aAmbient * 1.4 * dSizeK + (1.0 - aAmbient) * subjScale);',
-    // 少数粒子低频变大（大颗粒数量少、频率低）；慢(0.18rad/s)无闪烁
+    // 少数粒子低频变大（大颗粒数量少、频率低）；慢(0.18rad/s)无闪烁；近景主体的大脉冲点收小(避免个别糊块)，尘埃大光斑保留
     '  float bigGate = step(0.95, hash(vec2(aSeed, 3.3)));',
-    '  float big = bigGate * (0.6 + 1.8 * (0.5 + 0.5 * sin(uTime * 0.18 + aSeed * 40.0))) * (aAmbient * 1.2 + (1.0 - aAmbient));',
+    '  float bigK = aAmbient * 1.2 + (1.0 - aAmbient) * mix(1.0, 0.45, zHard);',
+    '  float big = bigGate * (0.6 + 1.8 * (0.5 + 0.5 * sin(uTime * 0.18 + aSeed * 40.0))) * bigK;',
     '  float size = baseSize + big;',
     // 轮廓粒子沿剪影边缘小范围平滑流动：居中缓慢噪声漂移(不抽搐、不单向)，有流动感
     '  vec2 eN = vec2(vnoise(aPos * 2.5 + vec2(uTime * 0.06, aSeed * 7.0)),',
     '                 vnoise(aPos * 2.5 + vec2(aSeed * 7.0, uTime * 0.06)));',
     '  vec2 eFlow = (eN - 0.5) * 2.0 * 0.022 * aEdge * (1.0 - aAmbient);',
     '  finalPos += eFlow;',
-    // 变焦自适应细节：只在“强推近”时才对主体内部粒子轻微抽稀（脸部特写取景框已对准猫脸、需要保留五官密度，
-    //   故抽稀阈值上移到 S>2、且更温和）；轮廓(aEdge)严格线性放大保持细锐实线不抽稀；尘埃(aAmbient)不抽稀。
-    //   拉远(S→1)时 zAmt→0，全部粒子恢复饱满，全身猫完整。
-    '  float zAmt = smoothstep(2.0, 4.5, uCamScale);',
-    '  float interior = (1.0 - aEdge) * (1.0 - aAmbient);',
-    '  float thinGate = step(hash(vec2(aSeed * 13.7 + 1.1, aSeed * 7.7)), 0.50);',
-    '  float thin = zAmt * interior * thinGate;',
-    '  float detailKeep = 1.0 - thin * 0.70;',
     '  gl_Position = vec4(finalPos, 0.0, 1.0);',
-    '  gl_PointSize = size * uPointSize * clip * detailKeep;',
-    // 透明度：恒为粒子本色；轮廓粒子提亮(勾边更明显)；被抽稀的内部粒子同步淡出；出画部分由视口几何裁切（真实镜头硬边缘）
+    '  gl_PointSize = size * uPointSize * clip;',
+    // 透明度：恒为粒子本色；轮廓粒子提亮(勾边更明显)；出画部分由视口几何裁切（真实镜头硬边缘）
     '  float edgeGlow = mix(1.0, 1.45, aEdge * (1.0 - aAmbient));',
-    '  vAlpha = aAlpha * uAlphaScale * clip * edgeGlow * detailKeep;',
+    '  vAlpha = aAlpha * uAlphaScale * clip * edgeGlow;',
     '}'
   ].join('\n');
 
@@ -415,24 +408,26 @@
             al = 0.035 + body * 0.07;
           }
         } else if (layer.mode === 'dark') {
-          // 黑粒子（白底上）：越暗越密，纹理处更实；尺寸方差大（组成猫的粒子有大有小）
+          // 黑粒子（白底/亮侧上）：越暗越密；眼珠/鼻头等极暗处强制近实心，保证亮侧五官清晰；尺寸方差大
           var darkness = (150 - gray) / 150;
           if (darkness <= 0.02) continue;
           w = darkness * (0.45 + 0.55 * tex);
-          sz = (0.6 + w * 1.7 + Math.random() * 0.5) * (0.7 + Math.random() * 1.0); al = 0.4 + w * 0.6;
+          if (gray < 70) w = Math.max(w, 0.92);             // 眼珠/鼻头等极暗五官：近实心黑点
+          sz = (0.5 + w * 1.5 + Math.random() * 0.45) * (0.7 + Math.random() * 0.9); al = 0.45 + w * 0.55;
         } else if (layer.mode === 'light') {
           // 白粒子（黑底上）：亮部×纹理；均匀浅底(背景)纹理≈0被剔除
           if (tex < 0.10) continue;
           w = (gray / 255) * (0.25 + 0.75 * tex);
           sz = (0.6 + w * 1.7 + Math.random() * 0.5) * (0.7 + Math.random() * 1.0); al = 0.4 + w * 0.6;
         } else if (layer.mode === 'lightCat') {
-          // 白粒子（黑底上，深色猫）：只在亮毛/强毛发纹理处落子；眼鼻等暗部(低灰度)与平面区域自然稀疏留空——
-          //   五官靠"亮毛密、五官暗部稀"的点绘疏密关系呈现，近景放大也不糊
-          if (tex < 0.12) continue;
-          var texK = Math.min(1, (tex - 0.12) / 0.45);   // 纹理越强越密
-          var lw = (gray / 255) * 0.75 + 0.10;           // 亮毛密、暗部(眼鼻)极稀
-          w = lw * (0.15 + 0.85 * texK);
-          sz = (0.5 + w * 1.3 + Math.random() * 0.45) * (0.75 + Math.random() * 0.9); al = 0.5 + w * 0.5;
+          // 白粒子（黑底上，浅色猫）：眼睛/鼻子等“深暗五官”直接不落子→透出黑底，形成清晰的深色眼鼻“负形”；
+          //   亮毛处密集白点。这样近景放大时眼鼻=黑形、毛=白点，五官一眼可辨，而不是糊成白团。
+          if (gray < 80) continue;                           // 眼珠/鼻/嘴等极暗五官留空（负形），透出黑底；毛影不受影响
+          if (tex < 0.08) continue;                          // 平面无毛发纹理处稀疏
+          var bright = (gray - 80) / 175;                    // 越亮(白毛)越密
+          w = Math.min(1, bright * (0.40 + 0.60 * Math.min(1, tex / 0.5)));
+          if (w < 0.10) continue;
+          sz = (0.45 + w * 1.15 + Math.random() * 0.4) * (0.75 + Math.random() * 0.7); al = 0.55 + w * 0.45;
         } else if (layer.mode === 'lightFlat') {
           // 白粒子（蒙版白区，版画亮部整块）
           if (gray <= 128) continue;
@@ -615,8 +610,8 @@
   // 电影镜头状态（纯光学变焦）：camScale=视野缩放倍数（>1 推近，1 全身）；camPivot=变焦光心(NDC)
   var camState = { scale: 1, pivot: [-0.55, 0.0] };
 
-  // 猫脸(头部中心)在世界坐标(NDC)中的高度：从已采样图层的头部重心 + contain 系数算出
-  // （电影镜头开场把光心反解为使该点落到屏幕 faceScreen 位置，形成真正的“脸部特写”）
+  // 猫脸(头部中心)在世界坐标(NDC)中的垂直高度：从已采样图层的头部重心 + contain 系数算出
+  // （电影镜头开场把光心置于其上方，使头部中心映射到屏幕垂直中部，形成脸部特写）
   function faceWorldY() {
     if (CFG.faceWorldY != null) return CFG.faceWorldY;
     for (var i = 0; i < layers.length; i++) {
@@ -626,18 +621,6 @@
       if (hd) return (0.5 - hd[1]) * 2 * L.ky;   // 头部中心的世界 y
     }
     return 0.6;                                  // 图片未加载完时的兜底值
-  }
-
-  // 猫脸(头部中心)在世界坐标(NDC)中的水平位置（头部重心 u + ox 偏移，再按 contain 归一）
-  function faceWorldX() {
-    if (CFG.faceWorldX != null) return CFG.faceWorldX;
-    for (var i = 0; i < layers.length; i++) {
-      var L = layers[i];
-      if (L.dust || !L.kx) continue;
-      var hd = L.head || L.face;
-      if (hd) return ((hd[0] - 0.5) * 2 * L.kx + (L.ox || 0));
-    }
-    return 0.0;
   }
 
   function frame(dt) {
@@ -657,23 +640,19 @@
       w1 = 1; w2 = 0;
       scatter1 = 0; scatter2 = 0;
       var t = smoothstep(0.03, 0.97, p);
-      var S0 = (CFG.faceZoom != null) ? CFG.faceZoom : (CFG.camScaleStart || 2.6);  // 开场特写倍数
-      camState.scale = 1.0 + (S0 - 1.0) * (1.0 - t);     // S0(推近脸特写) → 1(全身取景)
-      // 纯光学变焦、光心全程固定：屏幕 = S·世界 + pivot·(1−S)。
-      //   按“开场(S=S0)时把猫脸世界点(wx,wy)对准屏幕 faceScreen(sx,sy)”反解固定光心：
-      //   pivot = (s − S0·world)/(1−S0)。这样近景真正框住猫脸（眼/鼻/耳在画内，跨明暗分界两侧可见），
-      //   随滚轮拉远取景框以该光心连续扩大，身体单调入镜，结尾 S=1 时光心失效、猫完整居中全身。
-      var fs = CFG.faceScreen || [0.2, 0.05];
-      var wx = faceWorldX(), wy = faceWorldY();
-      var denom = 1.0 - S0;
-      var pivotX = (CFG.camPivotX != null) ? CFG.camPivotX : (fs[0] - S0 * wx) / denom;
-      var pivotY = (CFG.camPivotY != null) ? CFG.camPivotY : (fs[1] - S0 * wy) / denom;
+      var S0 = CFG.camScaleStart || 6.0;                 // 开场推近倍数
+      camState.scale = 1.0 + (S0 - 1.0) * (1.0 - t);     // 6.0(推近特写) → 1(全身取景)
+      var pivotX = CFG.camPivotX != null ? CFG.camPivotX : -0.55;  // 水平光心固定，猫仍从画面右边缘入镜（非滑入）
+      // 垂直光心同样固定为一个常数（全程不随变焦移动）——纯光学变焦，光心不动，只有取景框扩大。
+      //   光心取在猫脸上方(约 1.33 倍猫脸高度)，使推近阶段猫脸落在屏幕垂直中部形成脸部特写、
+      //   胸口/身体在画外；随取景框扩大身体自然、单调地连续入镜。光心全程不动 ⇒ 画面绝不上下反复，
+      //   结尾 scale=1 时光心不起作用，猫完整居中全身。
+      var pivotY = (CFG.camPivotY != null) ? CFG.camPivotY : 1.33 * faceWorldY();
       camState.pivot = [pivotX, pivotY];
       focus = 1;                                          // 猫恒存在，出画部分由取景框几何裁切
       contrast = smoothstep(0.02, 0.40, p);              // 背景渐变渐显
-      // 渐变过渡带：开场对齐猫脸目标 x(特写时明暗分界正好擦过猫脸)，随滚动移到画面中间
-      var edge0 = (CFG.edgeStart != null) ? CFG.edgeStart : fs[0] + 0.42;
-      edge = edge0 * (1 - t) + EDGE_NDC * t;
+      // 渐变过渡带：一开始偏右，随滚动移到画面中间
+      edge = (CFG.edgeStart != null ? CFG.edgeStart : 0.55) * (1 - t) + EDGE_NDC * t;
     } else if (SINGLE) {
       w1 = 1; w2 = 0;
       scatter1 = smoothstep(0.55, 0.95, p);
